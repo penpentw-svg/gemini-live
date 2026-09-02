@@ -152,7 +152,7 @@ details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
 </div>
 
 <div class="footer">
-  v3.2.1：修正第一軌 WebSocket 訊息解析要求辨識可聽見的背景／環境音並以括號標示，例如(水聲)；五個主要控制按鈕固定同列；版本號固定顯示於標題列。
+  v3.2.1：第二軌精翻要求辨識可聽見的背景／環境音並以括號標示，例如(水聲)；五個主要控制按鈕固定同列；版本號固定顯示於標題列。
 </div>
 </div>
 
@@ -344,17 +344,6 @@ function flushPendingAudio(){
   if(q.length) log(`已補送握手期間暫存音訊：${q.length} 塊。`);
 }
 
-async function eventToText(data){
-  // WebSocket 在不同瀏覽器可能以 String、Blob 或 ArrayBuffer 傳回。
-  // v3.2.0 原本呼叫了不存在的 eventToText()，導致 setupComplete
-  // 即使已由 Gemini 回傳，也會在解析前直接拋出 ReferenceError。
-  if(typeof data === 'string') return data;
-  if(data instanceof Blob) return await data.text();
-  if(data instanceof ArrayBuffer) return new TextDecoder('utf-8').decode(new Uint8Array(data));
-  if(ArrayBuffer.isView(data)) return new TextDecoder('utf-8').decode(data);
-  return String(data ?? '');
-}
-
 function openWebSocket(){
   const key=els.api.value.trim();
   const model=els.model1.value.trim();
@@ -375,11 +364,11 @@ function openWebSocket(){
         }
       }
     };
+
+    // Only request session resumption when a real resume handle exists.
     if(resumeHandle){
       setup.setup.sessionResumption={handle:resumeHandle};
     }
-      }
-    };
     try{ws.send(JSON.stringify(setup));}
     catch(e){log('setup 發送失敗：'+e.message,'ERROR');}
     clearTimeout(wsSetupTimer);
@@ -392,17 +381,17 @@ function openWebSocket(){
     },10000);
   };
 
-  ws.onmessage=async ev=>{
+  ws.onmessage=ev=>{
     try{
-      const text=await eventToText(ev.data);
-      if(!text) return;
-      let data;
-      try{
-        data=JSON.parse(text);
-      }catch(parseErr){
-        log('WebSocket 回傳不是有效 JSON：'+parseErr.message+'；內容：'+text.slice(0,500),'WARN');
+      // v3.1-compatible handling: Gemini Live API returns JSON text.
+      // Do NOT call eventToText() here; it was undefined in v3.2.0 and
+      // caused setupComplete to be discarded.
+      if(typeof ev.data!=='string'){
+        log('WebSocket 收到非文字資料，略過。','WARN');
         return;
       }
+
+      const data=JSON.parse(ev.data);
 
       if(data.setupComplete){
         wsReady=true;
@@ -417,7 +406,6 @@ function openWebSocket(){
       if(data.sessionResumptionUpdate){
         const u=data.sessionResumptionUpdate;
         if(u.newHandle && u.resumable!==false) resumeHandle=u.newHandle;
-        return;
       }
 
       if(data.goAway){
@@ -428,7 +416,6 @@ function openWebSocket(){
           clearTimeout(reconnectTimer);
           reconnectTimer=setTimeout(()=>rotateLiveSession(),delay);
         }
-        return;
       }
 
       if(data.error){
@@ -449,6 +436,7 @@ function openWebSocket(){
         lastTranscriptAt=performance.now();
         renderTrack1();
       }
+
       if(c?.inputTranscription?.text){
         const t=c.inputTranscription.text;
         track1Final.push({time:new Date().toISOString(),text:t});
@@ -457,7 +445,10 @@ function openWebSocket(){
         renderTrack1();
         els.export.disabled=false;
       }
-    }catch(e){log('WebSocket JSON 解析失敗：'+e.message,'WARN');}
+    }catch(e){
+      log('WebSocket JSON 解析失敗：'+e.message,'WARN');
+      if(typeof ev.data==='string') log('收到資料片段：'+ev.data.slice(0,500),'WARN');
+    }
   };
 
   ws.onerror=()=>log('WebSocket onerror。','ERROR');
@@ -694,12 +685,10 @@ function startWatchdog(){
   watchdogTimer=setInterval(()=>{
     if(!running || !wsReady) return;
     const silentFor=(performance.now()-lastTranscriptAt)/1000;
-    if(lastTranscriptAt && silentFor>12){
-      log(`第一軌 ${Math.round(silentFor)} 秒沒有收到逐字稿，啟動保守重連。`,'WARN');
-      rotateLiveSession();
-      lastTranscriptAt=performance.now();
+    if(lastTranscriptAt && silentFor>30){
+      log(`第一軌 ${Math.round(silentFor)} 秒沒有收到逐字稿；保持目前 Live session，不自動切換。`,'WARN');
     }
-  },3000);
+  },5000);
 }
 async function setupAudio(){
   mediaStream=await navigator.mediaDevices.getUserMedia({
