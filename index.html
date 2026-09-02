@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Gemini 雙軌即時同傳 v3.1.12</title>
+<title>Gemini 雙軌即時同傳 v3.1.13</title>
 <style>
 :root{--bg:#0b1020;--panel:#121a2b;--panel2:#182235;--text:#eef2ff;--muted:#9aa7bd;--line:#2a3750;--accent:#60a5fa;--danger:#ef4444;--warn:#f59e0b;--ok:#34d399;--radius:14px}
 *{box-sizing:border-box}
@@ -70,7 +70,7 @@ h1{font-size:20px;margin:0}
 <header>
   <div>
     <h1>Gemini 雙軌即時同傳</h1>
-    <div class="version">Version 3.1.12 · Single HTML · Gemini API v1beta</div>
+    <div class="version">Version 3.1.13 · Single HTML · Gemini API v1beta</div>
   </div>
   <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">待機</span></div>
 </header>
@@ -152,7 +152,7 @@ h1{font-size:20px;margin:0}
 </div>
 
 <div class="footer">
-  v3.1.12：修復第一軌 WebSocket 缺失的 eventToText() 解析函式；設定面板與上方「設定」按鈕合併為單一開關，預設收合，點擊按鈕才展開；雙軌共用同一份 16 kHz / Mono / PCM16 原始音訊；第一軌具備 session resumption、重連與無回應 watchdog；第二軌逐段排隊、使用正確的 inlineData 音訊欄位。
+  v3.1.13：修復第一軌 WebSocket 缺失的 eventToText() 解析函式；設定面板與上方「設定」按鈕合併為單一開關，預設收合；第一軌音訊改為 100ms（1600 samples）固定分塊送出並提高 VAD 靈敏度（startOfSpeechSensitivity=HIGH），改善偵測不到語音起始的問題；雙軌共用同一份 16 kHz / Mono / PCM16 原始音訊；第一軌具備 session resumption、重連與無回應 watchdog；第二軌逐段排隊、使用正確的 inlineData 音訊欄位。
 </div>
 </div>
 
@@ -185,6 +185,7 @@ let settings = {
 };
 
 let audioContext = null, mediaStream = null, sourceNode = null, processor = null;
+let liveSendBuf = new Int16Array(0), liveSendTarget = 1600;
 let ws = null, wsReady = false, wsSetupTimer = null;
 let running = false, wakeLock = null, startAt = 0, chunkStartedAt = 0;
 let chunkParts = [], chunkSamples = 0, chunkTimer = null, progressTimer = null;
@@ -325,7 +326,7 @@ function buildWav(pcmBuffers, sampleRate=16000){
   return buffer;
 }
 
-function sendLiveAudio(pcmBuffer){
+function sendLiveAudioRaw(pcmBuffer){
   // Keep a short pre-handshake queue so the beginning of speech is not lost.
   if(!ws || ws.readyState!==WebSocket.OPEN || !wsReady){
     if(pendingAudioQueue.length < 25) pendingAudioQueue.push(pcmBuffer.slice(0));
@@ -338,6 +339,27 @@ function sendLiveAudio(pcmBuffer){
       }
     }));
   }catch(e){log('WebSocket 發送失敗：'+e.message,'ERROR');}
+}
+function sendLiveAudio(pcmBuffer){
+  // Coalesce into ~100ms (1600 samples @16kHz) frames per Live API guidance,
+  // instead of forwarding whatever size the ScriptProcessor happens to hand us.
+  const incoming=new Int16Array(pcmBuffer);
+  const merged=new Int16Array(liveSendBuf.length+incoming.length);
+  merged.set(liveSendBuf,0);
+  merged.set(incoming,liveSendBuf.length);
+  let offset=0;
+  while(merged.length-offset>=liveSendTarget){
+    const frame=merged.slice(offset,offset+liveSendTarget);
+    sendLiveAudioRaw(frame.buffer);
+    offset+=liveSendTarget;
+  }
+  liveSendBuf=merged.slice(offset);
+}
+function flushLiveSendBuf(){
+  if(liveSendBuf.length){
+    sendLiveAudioRaw(liveSendBuf.buffer);
+    liveSendBuf=new Int16Array(0);
+  }
 }
 function flushPendingAudio(){
   if(!ws || ws.readyState!==WebSocket.OPEN || !wsReady) return;
@@ -369,6 +391,14 @@ function openWebSocket(){
         inputAudioTranscription:{
           languageCodes:['ja-JP'],
           mode:'VERBATIM'
+        },
+        realtimeInputConfig:{
+          automaticActivityDetection:{
+            startOfSpeechSensitivity:'START_SENSITIVITY_HIGH',
+            prefixPaddingMs:100,
+            endOfSpeechSensitivity:'END_SENSITIVITY_HIGH',
+            silenceDurationMs:600
+          }
         },
         sessionResumption: resumeHandle ? {handle:resumeHandle} : {}
       }
@@ -714,7 +744,7 @@ async function start(){
   saveSettings();
   running=true;stopping=false;reconnects=0;
   track1Final=[];track2Results=[];currentInterim='';
-  chunkParts=[];chunkSamples=0;pendingAudioQueue=[];secondQueue=[];secondSending=false;chunkIndex=0;resumeHandle=null;lastTranscriptAt=performance.now();
+  chunkParts=[];chunkSamples=0;pendingAudioQueue=[];secondQueue=[];secondSending=false;chunkIndex=0;resumeHandle=null;lastTranscriptAt=performance.now();liveSendBuf=new Int16Array(0);
   els.t1.innerHTML='<span class="interim">連線中…</span>';
   els.t2.innerHTML='<span class="interim">等待第一個音訊切片…</span>';
   els.start.disabled=true;els.stop.disabled=false;els.export.disabled=true;
@@ -750,6 +780,7 @@ async function stop(){
   if(sourceNode){try{sourceNode.disconnect();}catch{}sourceNode=null;}
   if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}
   if(audioContext){try{await audioContext.close();}catch{}audioContext=null;}
+  flushLiveSendBuf();
   closeWS();
   if(wakeLock){try{await wakeLock.release();}catch{}wakeLock=null;}
   const secs=chunkSamples/2/16000;
@@ -803,7 +834,7 @@ document.addEventListener('visibilitychange',async()=>{
   }
 });
 
-loadSettings();bindSettings();log('v3.1.12 載入完成。');
+loadSettings();bindSettings();log('v3.1.13 載入完成。');
 })();
 </script>
 </body>
