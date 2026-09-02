@@ -113,13 +113,23 @@
             cursor: pointer;
         }
 
-        /* 控制按鈕區 */
+        /* 控制按鈕區 - 移出設定選單 */
         .controls {
             display: flex;
             gap: 12px;
             margin-top: 16px;
             padding-top: 16px;
             border-top: 1px solid var(--border-color);
+            flex-wrap: wrap;
+        }
+
+        /* 主要控制按鈕區 (在設定選單外) */
+        .main-controls {
+            display: flex;
+            gap: 12px;
+            padding: 12px 16px;
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border-color);
             flex-wrap: wrap;
         }
 
@@ -302,6 +312,10 @@
             color: #6bcbff;
         }
 
+        .debug-log.success {
+            color: #00ff88;
+        }
+
         /* 頁尾 */
         footer {
             background: var(--card-bg);
@@ -351,7 +365,7 @@
                 grid-template-columns: 1fr;
             }
 
-            .controls {
+            .controls, .main-controls {
                 flex-direction: column;
             }
 
@@ -450,18 +464,26 @@
                 </div>
             </div>
 
+            <!-- 設定選單內的按鈕 (保留給進階使用者) -->
             <div class="controls">
-                <button class="btn-start" id="btnStart">
-                    <span>🎤</span> 啟動收音
-                </button>
-                <button class="btn-stop" id="btnStop" disabled>
-                    <span>⏹️</span> 停止收音
-                </button>
-                <button class="btn-export" id="btnExport" disabled>
+                <button class="btn-export" id="btnExportSettings" disabled>
                     <span>📥</span> 匯出記錄
                 </button>
             </div>
         </details>
+    </div>
+
+    <!-- 主要控制按鈕區 (在設定選單外) -->
+    <div class="main-controls">
+        <button class="btn-start" id="btnStart">
+            <span>🎤</span> 啟動收音
+        </button>
+        <button class="btn-stop" id="btnStop" disabled>
+            <span>⏹️</span> 停止收音
+        </button>
+        <button class="btn-export" id="btnExport">
+            <span>📥</span> 匯出記錄
+        </button>
     </div>
 
     <!-- 雙軌顯示區 -->
@@ -510,7 +532,7 @@
 
     <!-- 頁尾 -->
     <footer>
-        <span class="version-badge">v1.7.0 (2026.09.02-r4)</span>
+        <span class="version-badge">v1.8.0 (2026.09.02-r5)</span>
     </footer>
 
     <script>
@@ -702,7 +724,7 @@
             return new Blob([wavBuffer], { type: 'audio/wav' });
         }
 
-        // ==================== 第一軌：WebSocket 即時同傳 (修復 1008 問題) ====================
+        // ==================== 第一軌：WebSocket 即時同傳 (修復 1007/1008 問題) ====================
         async function startTrack1() {
             const apiKey = document.getElementById('apiKey').value.trim();
             if (!apiKey) {
@@ -738,7 +760,7 @@
                         clearTimeout(connectionTimeout);
                         log('WebSocket 連線已建立 (OPEN)', 'info');
                         
-                        // 發送 setup 封包
+                        // 發送 setup 封包 (修正格式)
                         sendSetupMessage(model, targetLang);
                         state.isWaitingForSetupResponse = true;
                     };
@@ -752,7 +774,7 @@
                             if (response.setupComplete === true) {
                                 state.isSetupComplete = true;
                                 state.isWaitingForSetupResponse = false;
-                                log('✅ WebSocket 協商完成 (setupComplete=true)，開始傳送音訊', 'info');
+                                log('✅ WebSocket 協商完成 (setupComplete=true)，開始傳送音訊', 'success');
                                 document.getElementById('track1Status').className = 'status-indicator active';
                                 
                                 // 發送佇列中的音訊
@@ -766,7 +788,7 @@
                                 if (!state.isSetupComplete) {
                                     state.isSetupComplete = true;
                                     state.isWaitingForSetupResponse = false;
-                                    log('✅ 收到 serverContent，視為 setup 完成', 'info');
+                                    log('✅ 收到 serverContent，視為 setup 完成', 'success');
                                     document.getElementById('track1Status').className = 'status-indicator active';
                                     flushAudioQueue();
                                 }
@@ -780,7 +802,7 @@
                                 if (!state.isSetupComplete) {
                                     state.isSetupComplete = true;
                                     state.isWaitingForSetupResponse = false;
-                                    log('✅ 收到 transcript，視為 setup 完成', 'info');
+                                    log('✅ 收到 transcript，視為 setup 完成', 'success');
                                     document.getElementById('track1Status').className = 'status-indicator active';
                                     flushAudioQueue();
                                 }
@@ -805,6 +827,12 @@
                         state.isSetupComplete = false;
                         state.isWaitingForSetupResponse = false;
                         document.getElementById('track1Status').className = 'status-indicator';
+                        
+                        // 1007 Invalid JSON 特殊處理
+                        if (event.code === 1007) {
+                            log('❌ 1007 Invalid JSON：setup 封包格式錯誤', 'error');
+                            log('請確認模型名稱與 setup 格式正確', 'error');
+                        }
                         
                         // 1008 Policy Violation 特殊處理
                         if (event.code === 1008) {
@@ -832,12 +860,13 @@
 
         function sendSetupMessage(model, targetLang) {
             // 修正：使用正確的 Bidi API setup 格式
+            // languageCode 不應該放在 generationConfig 內
             const setupMessage = {
                 setup: {
                     model: `models/${model}`,
                     generationConfig: {
-                        responseModalities: ['TEXT'],
-                        languageCode: 'zh-TW'
+                        responseModalities: ['TEXT']
+                        // 移除 languageCode - 這是導致 1007 錯誤的原因
                     },
                     systemInstruction: {
                         parts: [{
@@ -1287,8 +1316,9 @@
                 document.getElementById('btnStart').disabled = true;
                 document.getElementById('btnStop').disabled = false;
                 document.getElementById('btnExport').disabled = false;
+                document.getElementById('btnExportSettings').disabled = false;
 
-                log('✅ 收音已啟動', 'info');
+                log('✅ 收音已啟動', 'success');
 
             } catch (error) {
                 log(`啟動失敗：${error.message}`, 'error');
@@ -1349,6 +1379,8 @@
             // 更新 UI
             document.getElementById('btnStart').disabled = false;
             document.getElementById('btnStop').disabled = true;
+            document.getElementById('btnExport').disabled = true;
+            document.getElementById('btnExportSettings').disabled = true;
             document.getElementById('track1Status').className = 'status-indicator';
             document.getElementById('track2Status').className = 'status-indicator';
 
@@ -1359,6 +1391,7 @@
         document.getElementById('btnStart').addEventListener('click', startRecording);
         document.getElementById('btnStop').addEventListener('click', stopRecording);
         document.getElementById('btnExport').addEventListener('click', exportTranscripts);
+        document.getElementById('btnExportSettings').addEventListener('click', exportTranscripts);
 
         // 字級調整
         document.getElementById('fontSize').addEventListener('input', (e) => {
