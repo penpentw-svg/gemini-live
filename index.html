@@ -405,9 +405,10 @@
                 <div class="setting-item">
                     <label>第一軌模型 (即時)</label>
                     <select id="track1Model">
-                        <option value="gemini-2.0-flash" selected>Gemini 2.0 Flash</option>
+                        <option value="gemini-3.5-flash-live" selected>Gemini 3.5 Flash Live (推薦)</option>
                         <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                         <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
                     </select>
                 </div>
 
@@ -509,7 +510,7 @@
 
     <!-- 頁尾 -->
     <footer>
-        <span class="version-badge">v1.6.0 (2026.09.02-r3)</span>
+        <span class="version-badge">v1.7.0 (2026.09.02-r4)</span>
     </footer>
 
     <script>
@@ -517,6 +518,7 @@
         const state = {
             isRecording: false,
             isSetupComplete: false,
+            isWaitingForSetupResponse: false,
             audioContext: null,
             mediaStream: null,
             scriptProcessor: null,
@@ -528,7 +530,10 @@
             track2Transcripts: [],
             wakeLock: null,
             chunkTimer: null,
-            targetLanguage: 'zh-TW'
+            targetLanguage: 'zh-TW',
+            audioQueue: [], // 等待 setupComplete 的音訊佇列
+            wsReconnectAttempts: 0,
+            maxWsReconnectAttempts: 3
         };
 
         // 語言對應表
@@ -538,6 +543,76 @@
             'ja': '日文',
             'en': '英文'
         };
+
+        // ==================== LocalStorage 設定管理 ====================
+        const STORAGE_KEY = 'gemini_dual_track_settings_v1';
+
+        function loadSettings() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    const settings = JSON.parse(saved);
+                    
+                    if (settings.targetLanguage) {
+                        document.getElementById('targetLanguage').value = settings.targetLanguage;
+                        state.targetLanguage = settings.targetLanguage;
+                    }
+                    
+                    if (settings.track1Model) {
+                        document.getElementById('track1Model').value = settings.track1Model;
+                    }
+                    
+                    if (settings.track2Model) {
+                        document.getElementById('track2Model').value = settings.track2Model;
+                    }
+                    
+                    if (settings.chunkDuration) {
+                        document.getElementById('chunkDuration').value = settings.chunkDuration;
+                        state.chunkDuration = parseInt(settings.chunkDuration) * 1000;
+                    }
+                    
+                    if (settings.fontSize) {
+                        document.getElementById('fontSize').value = settings.fontSize;
+                        document.getElementById('fontSizeValue').textContent = settings.fontSize;
+                        document.documentElement.style.setProperty('--content-font-size', `${settings.fontSize}px`);
+                    }
+                    
+                    if (settings.layoutRatio) {
+                        document.getElementById('layoutRatio').value = settings.layoutRatio;
+                        const track1Pct = parseInt(settings.layoutRatio);
+                        const track2Pct = 100 - track1Pct;
+                        document.documentElement.style.setProperty('--track1-height', `${track1Pct}%`);
+                        document.documentElement.style.setProperty('--track2-height', `${track2Pct}%`);
+                    }
+                    
+                    if (settings.apiKey) {
+                        document.getElementById('apiKey').value = settings.apiKey;
+                    }
+                    
+                    log('設定已從 LocalStorage 載入', 'info');
+                }
+            } catch (error) {
+                log(`載入設定失敗：${error.message}`, 'warning');
+            }
+        }
+
+        function saveSettings() {
+            try {
+                const settings = {
+                    targetLanguage: document.getElementById('targetLanguage').value,
+                    track1Model: document.getElementById('track1Model').value,
+                    track2Model: document.getElementById('track2Model').value,
+                    chunkDuration: document.getElementById('chunkDuration').value,
+                    fontSize: document.getElementById('fontSize').value,
+                    layoutRatio: document.getElementById('layoutRatio').value,
+                    apiKey: document.getElementById('apiKey').value
+                };
+                localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
+                log('設定已儲存至 LocalStorage', 'info');
+            } catch (error) {
+                log(`儲存設定失敗：${error.message}`, 'warning');
+            }
+        }
 
         // ==================== 工具函數 ====================
         function log(message, type = 'info') {
@@ -627,79 +702,142 @@
             return new Blob([wavBuffer], { type: 'audio/wav' });
         }
 
-        // ==================== 第一軌：WebSocket 即時同傳 ====================
+        // ==================== 第一軌：WebSocket 即時同傳 (修復 1008 問題) ====================
         async function startTrack1() {
             const apiKey = document.getElementById('apiKey').value.trim();
             if (!apiKey) {
                 log('錯誤：請先輸入 API Key', 'error');
-                return;
+                return false;
             }
 
             const model = document.getElementById('track1Model').value;
             const targetLang = languageMap[state.targetLanguage];
 
+            // 正確的第一軌 WebSocket 端點格式 (BidiGenerateContent)
             const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
 
             try {
+                // 重置狀態
+                state.isSetupComplete = false;
+                state.isWaitingForSetupResponse = true;
+                state.audioQueue = [];
+                state.wsReconnectAttempts = 0;
+
                 state.webSocket = new WebSocket(wsUrl);
 
-                state.webSocket.onopen = () => {
-                    log('WebSocket 連線已建立', 'info');
-                    sendSetupMessage(model, targetLang);
-                };
-
-                state.webSocket.onmessage = (event) => {
-                    try {
-                        const response = JSON.parse(event.data);
-                        
-                        // 檢查 setupComplete
-                        if (response.setupComplete) {
-                            state.isSetupComplete = true;
-                            log('WebSocket 協商完成，開始傳送音訊', 'info');
-                            return;
+                return new Promise((resolve, reject) => {
+                    const connectionTimeout = setTimeout(() => {
+                        if (state.webSocket && state.webSocket.readyState === WebSocket.CONNECTING) {
+                            log('WebSocket 連線逾時 (10 秒)', 'error');
+                            state.webSocket.close();
+                            reject(new Error('WebSocket 連線逾時'));
                         }
+                    }, 10000);
 
-                        // 處理轉錄結果
-                        if (response.transcript && response.transcript.results) {
-                            for (const result of response.transcript.results) {
-                                if (result.isFinal && result.alternatives && result.alternatives.length > 0) {
-                                    const text = result.alternatives[0].transcript;
-                                    if (text.trim()) {
-                                        addTrack1Transcript(text, state.targetLanguage);
-                                    }
+                    state.webSocket.onopen = () => {
+                        clearTimeout(connectionTimeout);
+                        log('WebSocket 連線已建立 (OPEN)', 'info');
+                        
+                        // 發送 setup 封包
+                        sendSetupMessage(model, targetLang);
+                        state.isWaitingForSetupResponse = true;
+                    };
+
+                    state.webSocket.onmessage = (event) => {
+                        try {
+                            const response = JSON.parse(event.data);
+                            log(`收到伺服器回應：${JSON.stringify(response).substring(0, 200)}...`, 'info');
+                            
+                            // 關鍵修復：檢查 setupComplete 或 serverContent
+                            if (response.setupComplete === true) {
+                                state.isSetupComplete = true;
+                                state.isWaitingForSetupResponse = false;
+                                log('✅ WebSocket 協商完成 (setupComplete=true)，開始傳送音訊', 'info');
+                                document.getElementById('track1Status').className = 'status-indicator active';
+                                
+                                // 發送佇列中的音訊
+                                flushAudioQueue();
+                                resolve(true);
+                                return;
+                            }
+
+                            // 某些模型可能直接回傳 serverContent 而不回傳 setupComplete
+                            if (response.serverContent) {
+                                if (!state.isSetupComplete) {
+                                    state.isSetupComplete = true;
+                                    state.isWaitingForSetupResponse = false;
+                                    log('✅ 收到 serverContent，視為 setup 完成', 'info');
+                                    document.getElementById('track1Status').className = 'status-indicator active';
+                                    flushAudioQueue();
                                 }
+
+                                // 處理轉錄結果
+                                processTranscriptResponse(response);
+                            }
+
+                            // 處理其他可能的回應格式
+                            if (response.transcript && response.transcript.results) {
+                                if (!state.isSetupComplete) {
+                                    state.isSetupComplete = true;
+                                    state.isWaitingForSetupResponse = false;
+                                    log('✅ 收到 transcript，視為 setup 完成', 'info');
+                                    document.getElementById('track1Status').className = 'status-indicator active';
+                                    flushAudioQueue();
+                                }
+                                processTranscriptResponse(response);
+                            }
+
+                        } catch (e) {
+                            log(`WebSocket 訊息解析錯誤：${e.message}`, 'error');
+                        }
+                    };
+
+                    state.webSocket.onerror = (error) => {
+                        log(`❌ WebSocket 錯誤：${error.type || 'unknown'}`, 'error');
+                        document.getElementById('track1Status').className = 'status-indicator error';
+                        if (state.isWaitingForSetupResponse) {
+                            reject(new Error('WebSocket 錯誤'));
+                        }
+                    };
+
+                    state.webSocket.onclose = (event) => {
+                        log(`WebSocket 已關閉：代碼 ${event.code} - ${event.reason || '無原因'}`, 'warning');
+                        state.isSetupComplete = false;
+                        state.isWaitingForSetupResponse = false;
+                        document.getElementById('track1Status').className = 'status-indicator';
+                        
+                        // 1008 Policy Violation 特殊處理
+                        if (event.code === 1008) {
+                            log('❌ 1008 Policy Violation：可能是 setup 封包格式錯誤或模型不支援', 'error');
+                            if (state.wsReconnectAttempts < state.maxWsReconnectAttempts) {
+                                state.wsReconnectAttempts++;
+                                log(`嘗試重新連線 (${state.wsReconnectAttempts}/${state.maxWsReconnectAttempts})...`, 'warning');
+                                setTimeout(() => {
+                                    startTrack1().catch(e => log(`重連失敗：${e.message}`, 'error'));
+                                }, 2000);
                             }
                         }
-                    } catch (e) {
-                        log(`WebSocket 訊息解析錯誤：${e.message}`, 'error');
-                    }
-                };
-
-                state.webSocket.onerror = (error) => {
-                    log(`WebSocket 錯誤：${error.type}`, 'error');
-                    document.getElementById('track1Status').className = 'status-indicator error';
-                };
-
-                state.webSocket.onclose = (event) => {
-                    log(`WebSocket 已關閉：代碼 ${event.code}`, 'warning');
-                    state.isSetupComplete = false;
-                    document.getElementById('track1Status').className = 'status-indicator';
-                };
+                        
+                        if (state.isWaitingForSetupResponse) {
+                            reject(new Error(`WebSocket 關閉：${event.code}`));
+                        }
+                    };
+                });
 
             } catch (error) {
                 log(`WebSocket 連線失敗：${error.message}`, 'error');
+                throw error;
             }
         }
 
         function sendSetupMessage(model, targetLang) {
+            // 修正：使用正確的 Bidi API setup 格式
             const setupMessage = {
                 setup: {
                     model: `models/${model}`,
                     generationConfig: {
                         responseModalities: ['TEXT'],
-                        speechConfig: {
-                            languageCode: 'zh-TW'
-                        }
+                        languageCode: 'zh-TW'
                     },
                     systemInstruction: {
                         parts: [{
@@ -710,11 +848,35 @@
             };
 
             state.webSocket.send(JSON.stringify(setupMessage));
-            log('已傳送 setup 封包', 'info');
+            log('已傳送 setup 封包 (等待 setupComplete 回應)', 'info');
+        }
+
+        function processTranscriptResponse(response) {
+            // 處理多種可能的回應格式
+            let results = [];
+            
+            if (response.transcript && response.transcript.results) {
+                results = response.transcript.results;
+            } else if (response.serverContent && response.serverContent.realtimeResponse) {
+                const realtimeResponse = response.serverContent.realtimeResponse;
+                if (realtimeResponse.transcript && realtimeResponse.transcript.results) {
+                    results = realtimeResponse.transcript.results;
+                }
+            }
+
+            for (const result of results) {
+                if (result.isFinal && result.alternatives && result.alternatives.length > 0) {
+                    const text = result.alternatives[0].transcript;
+                    if (text && text.trim()) {
+                        addTrack1Transcript(text, state.targetLanguage);
+                        log(`第一軌收到轉錄：${text.substring(0, 50)}...`, 'info');
+                    }
+                }
+            }
         }
 
         function sendAudioChunk(audioData) {
-            if (!state.webSocket || state.webSocket.readyState !== WebSocket.OPEN || !state.isSetupComplete) {
+            if (!state.webSocket || state.webSocket.readyState !== WebSocket.OPEN) {
                 return;
             }
 
@@ -730,9 +892,29 @@
             };
 
             try {
-                state.webSocket.send(JSON.stringify(audioMessage));
+                // 關鍵修復：必須等待 setupComplete 後才能發送音訊
+                if (state.isSetupComplete) {
+                    state.webSocket.send(JSON.stringify(audioMessage));
+                } else {
+                    // 加入佇列等待
+                    state.audioQueue.push(audioMessage);
+                }
             } catch (error) {
                 log(`傳送音訊失敗：${error.message}`, 'error');
+            }
+        }
+
+        function flushAudioQueue() {
+            if (state.audioQueue.length > 0 && state.webSocket && state.webSocket.readyState === WebSocket.OPEN) {
+                log(`發送佇列中的 ${state.audioQueue.length} 個音訊封包`, 'info');
+                for (const message of state.audioQueue) {
+                    try {
+                        state.webSocket.send(JSON.stringify(message));
+                    } catch (error) {
+                        log(`發送佇列封包失敗：${error.message}`, 'error');
+                    }
+                }
+                state.audioQueue = [];
             }
         }
 
@@ -761,8 +943,6 @@
 
             contentDiv.appendChild(transcriptDiv);
             contentDiv.scrollTop = contentDiv.scrollHeight;
-
-            log(`第一軌收到轉錄：${text.substring(0, 50)}...`, 'info');
         }
 
         // ==================== 第二軌：硬切精翻 ====================
@@ -839,7 +1019,8 @@
                     );
 
                     if (!response.ok) {
-                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                        const errorText = await response.text();
+                        throw new Error(`HTTP ${response.status}: ${errorText}`);
                     }
 
                     const data = await response.json();
@@ -865,6 +1046,9 @@
                 } catch (error) {
                     log(`第二軌 API 呼叫失敗：${error.message}`, 'error');
                 }
+            };
+            reader.onerror = () => {
+                log('第二軌：FileReader 讀取失敗', 'error');
             };
             reader.readAsDataURL(wavBlob);
         }
@@ -973,7 +1157,7 @@
 
                 const source = state.audioContext.createMediaStreamSource(state.mediaStream);
 
-                // 使用 AudioWorklet 替代 ScriptProcessor (更現代的做法)
+                // 使用 ScriptProcessorNode
                 state.scriptProcessor = state.audioContext.createScriptProcessor(4096, 1, 1);
                 source.connect(state.scriptProcessor);
                 state.scriptProcessor.connect(state.audioContext.destination);
@@ -983,7 +1167,7 @@
                     const inputData = inputBuffer.getChannelData(0);
                     const pcmData = float32ToInt16PCM(inputData);
 
-                    // 第一軌：即時傳送
+                    // 第一軌：即時傳送 (會根據 isSetupComplete 決定是否發送或加入佇列)
                     sendAudioChunk(new Uint8Array(pcmData.buffer));
 
                     // 第二軌：累積到緩衝區
@@ -991,7 +1175,6 @@
                 };
 
                 log(`AudioContext 取樣率：${state.audioContext.sampleRate}Hz`, 'info');
-                document.getElementById('track1Status').className = 'status-indicator active';
                 document.getElementById('track2Status').className = 'status-indicator active';
 
             } catch (error) {
@@ -1080,13 +1263,16 @@
                 return;
             }
 
+            // 儲存設定
+            saveSettings();
+
             try {
                 log('開始啟動收音...', 'info');
                 
                 // 啟動音訊捕捉
                 await startAudioCapture();
                 
-                // 啟動第一軌 WebSocket
+                // 啟動第一軌 WebSocket (等待 setupComplete)
                 await startTrack1();
                 
                 // 啟動第二軌計時器
@@ -1102,11 +1288,14 @@
                 document.getElementById('btnStop').disabled = false;
                 document.getElementById('btnExport').disabled = false;
 
-                log('收音已啟動', 'info');
+                log('✅ 收音已啟動', 'info');
 
             } catch (error) {
                 log(`啟動失敗：${error.message}`, 'error');
-                alert(`啟動失敗：${error.message}\n\n請確認：\n1. 已授予麥克風權限\n2. 使用 HTTPS 或 localhost\n3. API Key 正確`);
+                alert(`啟動失敗：${error.message}\n\n請確認：\n1. 已授予麥克風權限\n2. 使用 HTTPS 或 localhost\n3. API Key 正確\n4. 模型名稱正確`);
+                
+                // 清理
+                await stopRecording();
             }
         }
 
@@ -1153,7 +1342,9 @@
 
             state.isRecording = false;
             state.isSetupComplete = false;
+            state.isWaitingForSetupResponse = false;
             state.pcmChunkBuffer = [];
+            state.audioQueue = [];
 
             // 更新 UI
             document.getElementById('btnStart').disabled = false;
@@ -1189,6 +1380,7 @@
         document.getElementById('targetLanguage').addEventListener('change', (e) => {
             state.targetLanguage = e.target.value;
             log(`目標語言已變更為：${languageMap[state.targetLanguage]}`, 'info');
+            saveSettings();
         });
 
         // 切片週期變更
@@ -1197,6 +1389,7 @@
             state.chunkDuration = value * 1000;
             document.getElementById('chunkDurationDisplay').textContent = value;
             log(`切片週期已變更為：${value}秒`, 'info');
+            saveSettings();
             
             // 如果正在錄音，重新啟動計時器
             if (state.isRecording) {
@@ -1208,11 +1401,16 @@
         // 模型變更日誌
         document.getElementById('track1Model').addEventListener('change', (e) => {
             log(`第一軌模型已變更為：${e.target.value}`, 'info');
+            saveSettings();
         });
 
         document.getElementById('track2Model').addEventListener('change', (e) => {
             log(`第二軌模型已變更為：${e.target.value}`, 'info');
+            saveSettings();
         });
+
+        // API Key 變更時自動儲存
+        document.getElementById('apiKey').addEventListener('change', saveSettings);
 
         // 頁面卸載時清理
         window.addEventListener('beforeunload', async () => {
@@ -1222,8 +1420,13 @@
             await releaseWakeLock();
         });
 
-        log('系統初始化完成', 'info');
-        log('請輸入 API Key 後點擊「啟動收音」', 'info');
+        // ==================== 初始化 ====================
+        window.addEventListener('DOMContentLoaded', () => {
+            loadSettings();
+            log('系統初始化完成', 'info');
+            log('設定已從 LocalStorage 載入 (如有)', 'info');
+            log('請確認 API Key 後點擊「啟動收音」', 'info');
+        });
     </script>
 </body>
 </html>
