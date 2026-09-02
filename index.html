@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>GEMINI 雙軌即時同譯 v3.2.2</title>
+<title>Gemini 雙軌即時同傳 v3.0.0</title>
 <style>
 :root{--bg:#0b1020;--panel:#121a2b;--panel2:#182235;--text:#eef2ff;--muted:#9aa7bd;--line:#2a3750;--accent:#60a5fa;--danger:#ef4444;--warn:#f59e0b;--ok:#34d399;--radius:14px}
 *{box-sizing:border-box}
@@ -17,15 +17,12 @@ button.primary{background:#2563eb}
 button.stop{background:#b91c1c}
 button.small{padding:7px 10px;font-size:13px}
 .container{max-width:1200px;margin:auto;padding:14px}
-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
-.title-row{min-width:0}
-h1{font-size:20px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.version{font-size:11px;font-weight:500;color:var(--muted);margin-left:5px;vertical-align:middle}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+h1{font-size:20px;margin:0}
+.version{font-size:12px;color:var(--muted)}
 .status{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--muted)}
 .dot{width:9px;height:9px;border-radius:50%;background:#64748b}.dot.on{background:var(--ok);box-shadow:0 0 10px #34d399}
-.controls{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-bottom:10px}
-.controls button{min-width:0;padding:9px 5px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap}
-.controls button span{overflow:hidden;text-overflow:ellipsis}
+.controls{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
 details.settings{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:10px}
 details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
 .settings-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:0 14px 14px}
@@ -56,31 +53,30 @@ details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
 .footer{font-size:11px;color:var(--muted);padding:12px 2px}
 @media(max-width:760px){
  .settings-grid{grid-template-columns:1fr 1fr}
- header{align-items:center;flex-direction:row}
- h1{font-size:18px}
+ header{align-items:flex-start;flex-direction:column}
  .live{font-size:16px}
 }
 @media(max-width:430px){
  .settings-grid{grid-template-columns:1fr}
- .controls button{padding:8px 2px;font-size:12px;gap:2px}
+ .controls button{flex:1 1 42%}
 }
 </style>
 </head>
 <body>
 <div class="container">
 <header>
-  <div class="title-row">
-    <h1>GEMINI 雙軌即時同譯 <span class="version">v3.2.2</span></h1>
+  <div>
+    <h1>Gemini 雙軌即時同傳</h1>
+    <div class="version">Version 3.0.0 · Single HTML · Gemini API v1beta</div>
   </div>
   <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">待機</span></div>
 </header>
 
 <div class="controls">
-  <button id="startBtn" class="primary" title="啟動收音">🎙<span>啟動</span></button>
-  <button id="stopBtn" class="stop" disabled title="停止收音">■<span>停止</span></button>
-  <button id="exportBtn" disabled title="匯出 Markdown 記錄">⇩<span>匯出</span></button>
-  <button id="copyLogBtn" title="複製除錯日誌">☷<span>日誌</span></button>
-  <button id="settingsBtn" title="開啟設定">⚙<span>設定</span></button>
+  <button id="startBtn" class="primary">🎙 啟動收音</button>
+  <button id="stopBtn" class="stop" disabled>■ 停止收音</button>
+  <button id="exportBtn" disabled>⇩ 匯出記錄</button>
+  <button id="copyLogBtn">複製日誌</button>
 </div>
 
 <details class="settings" id="settings">
@@ -152,7 +148,7 @@ details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
 </div>
 
 <div class="footer">
-  v3.2.2：第二軌精翻要求辨識可聽見的背景／環境音並以括號標示，例如(水聲)；五個主要控制按鈕固定同列；版本號固定顯示於標題列。
+  v3.0.0：雙軌共用同一份 16 kHz / Mono / PCM16 原始音訊；第一軌 WebSocket 即時轉錄，第二軌固定切片直接把 WAV 音訊送給 Gemini REST 重新聽取與精翻。
 </div>
 </div>
 
@@ -166,7 +162,7 @@ const REST_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const $ = id => document.getElementById(id);
 const els = {
-  start:$('startBtn'), stop:$('stopBtn'), export:$('exportBtn'), copyLog:$('copyLogBtn'), settingsBtn:$('settingsBtn'),
+  start:$('startBtn'), stop:$('stopBtn'), export:$('exportBtn'), copyLog:$('copyLogBtn'),
   api:$('apiKey'), target:$('targetLanguage'), model1:$('track1Model'), model2:$('track2Model'),
   duration:$('chunkDuration'), font:$('fontSize'), ratio:$('layoutRatio'),
   t1:$('track1Output'), t2:$('track2Output'), bar:$('progressBar'), ptext:$('progressText'),
@@ -190,7 +186,7 @@ let running = false, wakeLock = null, startAt = 0, chunkStartedAt = 0;
 let chunkParts = [], chunkSamples = 0, chunkTimer = null, progressTimer = null;
 let currentInterim = '';
 let track1Final = [], track2Results = [], allLogs = [];
-let reconnects = 0, stopping = false, reconnectTimer = null, watchdogTimer = null, lastTranscriptAt = 0, resumeHandle = null, secondQueue = [], secondSending = false, chunkIndex = 0, pendingAudioQueue = [];
+let reconnects = 0, stopping = false;
 
 function log(msg, level='INFO'){
   const ts = new Date().toLocaleTimeString();
@@ -252,9 +248,6 @@ function bindSettings(){
   });
 }
 
-function toggleSettings(){
-  $('settings').open = !$('settings').open;
-}
 function requireKey(){
   if(!els.api.value.trim()){
     alert('請先在「設定」輸入 Gemini API Key。');
@@ -318,68 +311,25 @@ function buildWav(pcmBuffers, sampleRate=16000){
 }
 
 function sendLiveAudio(pcmBuffer){
-  // Keep a short pre-handshake queue so the beginning of speech is not lost.
-  if(!ws || ws.readyState!==WebSocket.OPEN || !wsReady){
-    if(pendingAudioQueue.length < 25) pendingAudioQueue.push(pcmBuffer.slice(0));
-    return;
-  }
-  try{
-    ws.send(JSON.stringify({
-      realtimeInput:{
-        audio:{data:arrayBufferToBase64(pcmBuffer),mimeType:'audio/pcm;rate=16000'}
-      }
-    }));
-  }catch(e){log('WebSocket 發送失敗：'+e.message,'ERROR');}
-}
-function flushPendingAudio(){
-  if(!ws || ws.readyState!==WebSocket.OPEN || !wsReady) return;
-  const q=pendingAudioQueue.splice(0);
-  for(const pcm of q){
-    try{
-      ws.send(JSON.stringify({
-        realtimeInput:{audio:{data:arrayBufferToBase64(pcm),mimeType:'audio/pcm;rate=16000'}}
-      }));
-    }catch(e){log('佇列音訊發送失敗：'+e.message,'ERROR');break;}
-  }
-  if(q.length) log(`已補送握手期間暫存音訊：${q.length} 塊。`);
-}
-
-
-async function eventToText(data){
-  // Safari/iOS may deliver WebSocket messages as Blob instead of String.
-  // Gemini Live API messages are JSON; convert every supported payload type
-  // to UTF-8 text before JSON.parse().
-  if(typeof data === 'string') return data;
-
-  if(data instanceof Blob){
-    const buffer = await data.arrayBuffer();
-    return new TextDecoder('utf-8').decode(new Uint8Array(buffer));
-  }
-
-  if(data instanceof ArrayBuffer){
-    return new TextDecoder('utf-8').decode(new Uint8Array(data));
-  }
-
-  if(ArrayBuffer.isView(data)){
-    return new TextDecoder('utf-8').decode(
-      new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
-    );
-  }
-
-  throw new Error('Unsupported WebSocket message type: '+Object.prototype.toString.call(data));
+  if(!ws || ws.readyState!==WebSocket.OPEN) return;
+  const msg={
+    realtimeInput:{
+      audio:{data:arrayBufferToBase64(pcmBuffer),mimeType:'audio/pcm;rate=16000'}
+    }
+  };
+  try{ws.send(JSON.stringify(msg));}catch(e){log('WebSocket 發送失敗：'+e.message,'ERROR');}
 }
 
 function openWebSocket(){
   const key=els.api.value.trim();
   const model=els.model1.value.trim();
   const url=WS_BASE+'?key='+encodeURIComponent(key);
-  log(`建立第一軌 WebSocket：${model}${resumeHandle?'（嘗試恢復 session）':''}`);
+  log(`建立第一軌 WebSocket：${model}`);
   wsReady=false;
   ws=new WebSocket(url);
 
   ws.onopen=()=>{
     log('WebSocket 已連線，發送 setup。');
-    log('WebSocket binaryType='+ws.binaryType+'；iOS/Safari 可能以 Blob 回傳 JSON。');
     const setup={
       setup:{
         model:`models/${model}`,
@@ -390,19 +340,13 @@ function openWebSocket(){
         }
       }
     };
-
-    // Only request session resumption when a real resume handle exists.
-    if(resumeHandle){
-      setup.setup.sessionResumption={handle:resumeHandle};
-    }
-    try{ws.send(JSON.stringify(setup));}
-    catch(e){log('setup 發送失敗：'+e.message,'ERROR');}
+    ws.send(JSON.stringify(setup));
     clearTimeout(wsSetupTimer);
     wsSetupTimer=setTimeout(()=>{
       if(!wsReady){
         log('10 秒內沒有收到 setupComplete。','ERROR');
-        try{ws.close();}catch{}
-        scheduleReconnect('setup timeout');
+        closeWS();
+        setStatus('第一軌握手逾時',false);
       }
     },10000);
   };
@@ -411,128 +355,62 @@ function openWebSocket(){
     try{
       const text=await eventToText(ev.data);
       if(!text) return;
-
       const data=JSON.parse(text);
-
       if(data.setupComplete){
-        wsReady=true;
-        reconnects=0;
-        clearTimeout(wsSetupTimer);
+        wsReady=true; reconnects=0; clearTimeout(wsSetupTimer);
         log('setupComplete: true，第一軌開始接受音訊。');
-        flushPendingAudio();
         setStatus('收音中',true);
         return;
       }
-
-      if(data.sessionResumptionUpdate){
-        const u=data.sessionResumptionUpdate;
-        if(u.newHandle && u.resumable!==false) resumeHandle=u.newHandle;
-      }
-
-      if(data.goAway){
-        const ms=parseDurationMs(data.goAway.timeLeft);
-        log(`收到 goAway，剩餘 ${ms?Math.round(ms/1000)+' 秒':'未知'}。`,'WARN');
-        if(running && !stopping){
-          const delay=Math.max(500,(ms||5000)-2500);
-          clearTimeout(reconnectTimer);
-          reconnectTimer=setTimeout(()=>rotateLiveSession(),delay);
-        }
-      }
-
       if(data.error){
         const em=JSON.stringify(data.error);
         log('WebSocket API 錯誤：'+em,'ERROR');
         const fatal=/not found|not supported|unsupported|invalid model/i.test(em);
-        if(fatal){
-          log('判定為模型/能力致命錯誤，停止重連。','ERROR');
-          try{ws.close();}catch{}
-          setStatus('第一軌模型錯誤',false);
-        }
+        if(fatal){log('判定為模型/能力致命錯誤，停止重連。','ERROR'); closeWS();}
         return;
       }
-
       const c=data.serverContent;
-
       if(c?.interimInputTranscription?.text){
-        currentInterim=c.interimInputTranscription.text;
-        lastTranscriptAt=performance.now();
+        currentInterim += c.interimInputTranscription.text;
         renderTrack1();
       }
-
       if(c?.inputTranscription?.text){
         const t=c.inputTranscription.text;
         track1Final.push({time:new Date().toISOString(),text:t});
         currentInterim='';
-        lastTranscriptAt=performance.now();
         renderTrack1();
         els.export.disabled=false;
       }
-    }catch(e){
-      log('WebSocket JSON 解析失敗：'+e.message,'WARN');
-      try{
-        const raw=await eventToText(ev.data);
-        log('收到資料片段：'+raw.slice(0,500),'WARN');
-      }catch{}
-    }
+    }catch(e){log('WebSocket JSON 解析失敗：'+e.message,'WARN');}
   };
+
   ws.onerror=()=>log('WebSocket onerror。','ERROR');
-
   ws.onclose=ev=>{
-    clearTimeout(wsSetupTimer);
-    wsReady=false;
+    clearTimeout(wsSetupTimer); wsReady=false;
     log(`WebSocket 關閉：code=${ev.code}, reason=${ev.reason||'(無)'}`,'WARN');
-
     if(running && !stopping){
-      if(ev.code===1007){
-        log('1007 Invalid JSON/argument：停止自動重連，請檢查 setup。','ERROR');
-        setStatus('第一軌請求錯誤',false);
+      if(ev.code===1007 || ev.code===1008){
+        log('1007/1008：停止自動重連，請檢查 setup 或模型名稱。','ERROR');
+        setStatus('第一軌連線錯誤',false);
         return;
       }
-      if(ev.code===1008 && /not found|not supported|unsupported|invalid model/i.test(ev.reason||'')){
-        log('1008 模型不存在/不支援：停止自動重連。','ERROR');
-        setStatus('第一軌模型錯誤',false);
-        return;
+      if(reconnects<3){
+        reconnects++;
+        log(`準備重連第一軌 (${reconnects}/3)…`);
+        setTimeout(()=>{if(running&&!stopping)openWebSocket();},1000*Math.pow(2,reconnects-1));
+      }else{
+        log('已達最多 3 次重連。','ERROR');
+        setStatus('第一軌停止',false);
       }
-      scheduleReconnect(`close ${ev.code}`);
     }
   };
 }
 
-function parseDurationMs(v){
-  if(v==null) return 0;
-  if(typeof v==='number') return v;
-  if(typeof v==='object' && v.seconds!=null){
-    return Number(v.seconds)*1000+Math.round(Number(v.nanos||0)/1e6);
-  }
-  const m=String(v).match(/([\d.]+)s/);
-  return m?Number(m[1])*1000:0;
-}
-
-function scheduleReconnect(reason){
-  if(!running || stopping || reconnectTimer) return;
-  if(reconnects>=3){
-    log('已達本輪最多 3 次重連。','ERROR');
-    setStatus('第一軌停止',false);
-    return;
-  }
-  reconnects++;
-  const delay=Math.min(4000,1000*Math.pow(2,reconnects-1));
-  log(`第一軌 ${reason}，${delay}ms 後重連 (${reconnects}/3)…`,'WARN');
-  reconnectTimer=setTimeout(()=>{
-    reconnectTimer=null;
-    if(running&&!stopping) rotateLiveSession();
-  },delay);
-}
-
-function rotateLiveSession(){
-  if(!running || stopping) return;
-  log('切換第一軌 Live session，保留後續音訊串流。','WARN');
-  if(ws){
-    try{ws.onclose=null;ws.close();}catch{}
-  }
-  ws=null;
-  wsReady=false;
-  openWebSocket();
+async function eventToText(data){
+  if(typeof data==='string') return data;
+  if(data instanceof Blob) return await data.text();
+  if(data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+  return '';
 }
 
 function closeWS(){
@@ -557,29 +435,23 @@ function renderTrack1(){
   els.t1.scrollTop=els.t1.scrollHeight;
 }
 
-async function sendSecondChunk(pcmBuffers, seconds, isFlush=false, seq=0){
+async function sendSecondChunk(pcmBuffers, seconds, isFlush=false){
   if(!pcmBuffers.length) return;
   const wav=buildWav(pcmBuffers,16000);
   const b64=arrayBufferToBase64(wav);
   const model=els.model2.value.trim();
   const target=els.target.value;
-  const transcriptTail=track1Final.slice(-12).map(x=>x.text).join('\n');
+  const transcriptTail=track1Final.slice(-12).map(x=>x.text).join('\\n');
 
-  const prompt = `你是第二層高精度日文語音翻譯引擎。這是第 ${seq} 個獨立音訊切片。
-請「直接聽取這個 WAV 音訊」重新辨識，再翻譯；不要只依賴第一層逐字稿。
-
-重要規則：
-1. 只翻譯這個音訊切片，不要重複前一個切片的內容。
-2. 音訊可能從一句話中間開始，也可能在一句話中間結束；只翻譯實際聽到的內容。
-3. 第一層逐字稿只用來交叉比對；若與原始音訊不同，以原始音訊為準。
-4. 特別注意吵雜環境造成的漏字、同音詞、數字、人名、地名與專有名詞。
-5. 目標語言：${target}。若為 zh-TW，輸出自然、準確的繁體中文。
-6. 不要自行添加原文不存在的資訊；聽不清楚就標示 [聽不清]。
-7. 所有「實際聽得見」且對語境有意義的背景／環境音，都要在翻譯中用括號標示，例如(水聲)、(雨聲)、(車聲)、(人群喧鬧)、(笑聲)、(敲門聲)、(警報聲)。
-8. 背景音只標示你確實從原始 WAV 聽到的聲音；不要猜測或捏造不存在的聲音。
-9. 背景音標示應放在它實際發生的位置附近；若背景音持續存在，可在合理位置標示一次，不要每句重複。
-10. 若背景音蓋住人聲，仍以原始音訊為準；聽不清楚的人聲標示 [聽不清]。
-11. 不要輸出分析過程，只輸出本切片的翻譯與必要的背景音括號標示。
+  const prompt = `你是第二層高精度日文語音翻譯引擎。請直接分析我提供的原始 WAV 音訊，不要盲從第一層逐字稿。
+目標語言：${target}
+任務：
+1. 先從原始音訊重新辨識內容，特別注意吵雜環境、漏字、同音詞、數字、人名、地名與專有名詞。
+2. 與第一層逐字稿交叉比對；若第一層聽錯，以原始音訊為準。
+3. 翻譯成自然、準確的繁體中文（若目標語言不是 zh-TW，依目標語言輸出）。
+4. 保留說話者真正的語氣與上下文，不自行添加原文不存在的事實。
+5. 若音訊無法確定，不要猜測，標示「[聽不清]」。
+6. 只輸出這一段的完整翻譯，不要解釋你的工作流程。
 
 第一層最近逐字稿（僅供交叉比對，不是權威）：
 ${transcriptTail || '(無)'}`;
@@ -590,13 +462,14 @@ ${transcriptTail || '(無)'}`;
       role:'user',
       parts:[
         {text:prompt},
-        {inlineData:{mimeType:'audio/wav',data:b64}}
+        {inline_data:{mime_type:'audio/wav',data:b64}}
       ]
     }],
     generationConfig:{temperature:0.2}
   };
 
-  log(`第二軌 #${seq} 送出 ${seconds.toFixed(1)} 秒 WAV，約 ${Math.round(wav.byteLength/1024)} KB。`);
+  const id=Date.now();
+  log(`第二軌送出 ${seconds.toFixed(1)} 秒 WAV，約 ${Math.round(wav.byteLength/1024)} KB。`);
   try{
     const res=await fetch(url,{
       method:'POST',
@@ -604,58 +477,21 @@ ${transcriptTail || '(無)'}`;
       body:JSON.stringify(body)
     });
     const raw=await res.text();
-
     if(!res.ok){
-      log(`第二軌 #${seq} HTTP ${res.status}: ${raw.slice(0,1000)}`,'ERROR');
+      log(`第二軌 HTTP ${res.status}: ${raw.slice(0,800)}`,'ERROR');
       return;
     }
-
     let data;
     try{data=JSON.parse(raw);}catch{throw new Error('REST 回傳不是 JSON');}
-
-    const text=(data.candidates||[])
-      .flatMap(c=>c.content?.parts||[])
-      .map(p=>p.text||'')
-      .join('')
-      .trim();
-
-    if(!text){
-      log(`第二軌 #${seq} 沒有收到文字結果。`,'WARN');
-      return;
-    }
-
-    track2Results.push({
-      time:new Date().toISOString(),
-      seconds,
-      text,
-      flush:isFlush,
-      seq
-    });
+    const text=(data.candidates||[]).flatMap(c=>c.content?.parts||[]).map(p=>p.text||'').join('').trim();
+    if(!text){log('第二軌沒有收到文字結果。','WARN');return;}
+    track2Results.push({time:new Date().toISOString(),seconds,text,flush:isFlush});
     renderTrack2();
     els.export.disabled=false;
-    log(`第二軌 #${seq} 精翻完成。`);
+    log('第二軌精翻完成。');
   }catch(e){
-    log(`第二軌 #${seq} 請求失敗：${e.message}`,'ERROR');
+    log('第二軌請求失敗：'+e.message,'ERROR');
   }
-}
-
-function enqueueSecondChunk(pcmBuffers, seconds, isFlush=false){
-  if(!pcmBuffers.length || seconds<0.5) return;
-  const copy=pcmBuffers.map(b=>b.slice(0));
-  const seq=++chunkIndex;
-  secondQueue.push({pcmBuffers:copy,seconds,isFlush,seq});
-  log(`第二軌 #${seq} 已進入佇列；目前佇列 ${secondQueue.length} 段。`);
-  processSecondQueue();
-}
-
-async function processSecondQueue(){
-  if(secondSending || !secondQueue.length) return;
-  secondSending=true;
-  while(secondQueue.length){
-    const item=secondQueue.shift();
-    await sendSecondChunk(item.pcmBuffers,item.seconds,item.isFlush,item.seq);
-  }
-  secondSending=false;
 }
 
 function renderTrack2(){
@@ -674,18 +510,14 @@ function addPCMToChunk(pcmBuffer){
   chunkSamples += pcmBuffer.byteLength/2;
 }
 
-function flushChunk(force=false){
+async function flushChunk(force=false){
   const secs=chunkSamples/2/16000;
   if(secs<=0) return;
   if(!force && secs<0.5) return;
-
   const parts=chunkParts;
   const seconds=secs;
-  chunkParts=[];
-  chunkSamples=0;
-  chunkStartedAt=performance.now();
-
-  enqueueSecondChunk(parts,seconds,force);
+  chunkParts=[];chunkSamples=0;chunkStartedAt=performance.now();
+  await sendSecondChunk(parts,seconds,force);
 }
 
 function updateProgress(){
@@ -704,16 +536,6 @@ async function requestWakeLock(){
   }catch(e){log('Wake Lock 無法啟用：'+e.message,'WARN');}
 }
 
-function startWatchdog(){
-  clearInterval(watchdogTimer);
-  watchdogTimer=setInterval(()=>{
-    if(!running || !wsReady) return;
-    const silentFor=(performance.now()-lastTranscriptAt)/1000;
-    if(lastTranscriptAt && silentFor>30){
-      log(`第一軌 ${Math.round(silentFor)} 秒沒有收到逐字稿；保持目前 Live session，不自動切換。`,'WARN');
-    }
-  },5000);
-}
 async function setupAudio(){
   mediaStream=await navigator.mediaDevices.getUserMedia({
     audio:{channelCount:1,echoCancellation:false,noiseSuppression:false,autoGainControl:false}
@@ -744,7 +566,7 @@ async function start(){
   saveSettings();
   running=true;stopping=false;reconnects=0;
   track1Final=[];track2Results=[];currentInterim='';
-  chunkParts=[];chunkSamples=0;pendingAudioQueue=[];secondQueue=[];secondSending=false;chunkIndex=0;resumeHandle=null;lastTranscriptAt=performance.now();
+  chunkParts=[];chunkSamples=0;
   els.t1.innerHTML='<span class="interim">連線中…</span>';
   els.t2.innerHTML='<span class="interim">等待第一個音訊切片…</span>';
   els.start.disabled=true;els.stop.disabled=false;els.export.disabled=true;
@@ -758,7 +580,6 @@ async function start(){
     const dur=Number(els.duration.value);
     chunkTimer=setInterval(()=>{if(running)flushChunk(false);},dur*1000);
     progressTimer=setInterval(updateProgress,100);
-    startWatchdog();
     log('系統啟動完成。');
   }catch(e){
     log('啟動失敗：'+e.message,'ERROR');
@@ -774,8 +595,6 @@ async function stop(){
   setStatus('停止中…',false);
   if(chunkTimer){clearInterval(chunkTimer);chunkTimer=null;}
   if(progressTimer){clearInterval(progressTimer);progressTimer=null;}
-  if(watchdogTimer){clearInterval(watchdogTimer);watchdogTimer=null;}
-  if(reconnectTimer){clearTimeout(reconnectTimer);reconnectTimer=null;}
   if(processor){try{processor.disconnect();}catch{}processor=null;}
   if(sourceNode){try{sourceNode.disconnect();}catch{}sourceNode=null;}
   if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}
@@ -783,9 +602,8 @@ async function stop(){
   closeWS();
   if(wakeLock){try{await wakeLock.release();}catch{}wakeLock=null;}
   const secs=chunkSamples/2/16000;
-  if(secs>0.5) flushChunk(true);
+  if(secs>0.5) await flushChunk(true);
   else {chunkParts=[];chunkSamples=0;}
-  await processSecondQueue();
   updateProgress();
   setStatus('已停止',false);
   log('所有服務已停止。');
@@ -794,9 +612,9 @@ async function stop(){
 
 function exportMarkdown(){
   const lines=[
-    '# GEMINI 雙軌即時同譯記錄',
+    '# Gemini 雙軌即時同傳記錄',
     '',
-    `- 版本：3.2.2`,
+    `- 版本：3.0.0`,
     `- 匯出時間：${new Date().toLocaleString()}`,
     `- 目標語言：${els.target.value}`,
     `- 第一軌模型：${els.model1.value}`,
@@ -821,7 +639,6 @@ async function copyLogs(){
   catch(e){log('複製失敗：'+e.message,'ERROR');}
 }
 
-els.settingsBtn.addEventListener('click',toggleSettings);
 els.start.addEventListener('click',start);
 els.stop.addEventListener('click',stop);
 els.export.addEventListener('click',exportMarkdown);
@@ -833,7 +650,7 @@ document.addEventListener('visibilitychange',async()=>{
   }
 });
 
-loadSettings();bindSettings();log('v3.2.2 載入完成。');
+loadSettings();bindSettings();log('v3.0.0 載入完成。');
 })();
 </script>
 </body>
