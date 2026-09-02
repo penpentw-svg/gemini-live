@@ -1,738 +1,1229 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Gemini 雙軌雙語同傳系統</title>
-  <style>
-    :root {
-      --bg: #121316;
-      --card-bg: #1e2025;
-      --accent-live: #00d26a;
-      --accent-deep: #4da3ff;
-      --accent-export: #3a3f4d;
-      --text: #f0f2f5;
-      --text-sub: #9aa0a6;
-      --border: #2e323b;
-      --content-font-size: 15px;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: var(--bg);
-      color: var(--text);
-      padding: 10px;
-      display: flex;
-      flex-direction: column;
-      height: 100dvh;
-      overflow: hidden;
-      gap: 8px;
-    }
-    header {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      padding: 10px 12px;
-      border-radius: 12px;
-      flex-shrink: 0;
-    }
-    details summary {
-      font-size: 13px;
-      color: var(--text-sub);
-      cursor: pointer;
-      user-select: none;
-      margin-bottom: 6px;
-    }
-    .settings-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-top: 6px;
-    }
-    .full-width { grid-column: span 2; }
-    .config-group { display: flex; flex-direction: column; gap: 4px; }
-    label { font-size: 12px; color: var(--text-sub); }
-    input, select {
-      background: #0f1013;
-      border: 1px solid var(--border);
-      color: #fff;
-      padding: 8px;
-      border-radius: 6px;
-      font-size: 13px;
-      width: 100%;
-    }
-    .range-group {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .range-group input[type="range"] {
-      flex: 1;
-      padding: 0;
-      accent-color: var(--accent-deep);
-    }
-    .range-val { font-size: 12px; width: 45px; text-align: right; color: var(--text-sub); }
-    
-    .controls {
-      display: flex;
-      gap: 8px;
-      margin-top: 8px;
-    }
-    button {
-      padding: 12px;
-      border-radius: 8px;
-      border: none;
-      font-weight: 600;
-      font-size: 15px;
-      cursor: pointer;
-    }
-    #btn-toggle {
-      flex: 2;
-      background: var(--accent-live);
-      color: #000;
-    }
-    #btn-toggle.recording {
-      background: #ff4757;
-      color: #fff;
-    }
-    #btn-export {
-      flex: 1;
-      background: var(--accent-export);
-      color: #fff;
-      border: 1px solid var(--border);
-    }
-    #btn-export:active { opacity: 0.8; }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Gemini 雙軌即時同傳與硬切摘要系統</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
 
-    .status-bar {
-      font-size: 11px;
-      color: var(--text-sub);
-      margin-top: 6px;
-      display: flex;
-      justify-content: space-between;
-    }
-    .debug-log {
-      font-size: 11px;
-      color: #e6a23c;
-      background: #2b2515;
-      padding: 4px 8px;
-      border-radius: 4px;
-      margin-top: 6px;
-      font-family: monospace;
-      white-space: pre-wrap;
-      word-break: break-all;
-      max-height: 48px;
-      overflow-y: auto;
-    }
+        :root {
+            --content-font-size: 15px;
+            --track1-height: 50%;
+            --track2-height: 50%;
+            --primary-color: #4285f4;
+            --secondary-color: #34a853;
+            --warning-color: #fbbc04;
+            --error-color: #ea4335;
+            --bg-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --text-color: #202124;
+            --text-secondary: #5f6368;
+            --border-color: #dadce0;
+        }
 
-    .grid-container {
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      flex: 1;
-      min-height: 0;
-    }
-    .panel {
-      background: var(--card-bg);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 10px;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-      transition: flex 0.1s ease;
-    }
-    #panelLive { flex: 50; }
-    #panelDeep { flex: 50; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans TC', sans-serif;
+            background: var(--bg-color);
+            color: var(--text-color);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
 
-    .panel-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-      font-size: 13px;
-      font-weight: bold;
-      flex-shrink: 0;
-    }
-    .tag {
-      font-size: 10px;
-      padding: 2px 6px;
-      border-radius: 8px;
-      font-weight: normal;
-    }
-    .tag-live { background: rgba(0, 210, 106, 0.15); color: var(--accent-live); }
-    .tag-deep { background: rgba(77, 163, 255, 0.15); color: var(--accent-deep); }
-    .content-box {
-      flex: 1;
-      overflow-y: auto;
-      background: #0f1013;
-      border-radius: 6px;
-      padding: 10px;
-      font-size: var(--content-font-size);
-      line-height: 1.6;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .chunk-card {
-      border-left: 3px solid var(--accent-deep);
-      background: rgba(77, 163, 255, 0.05);
-      padding: 8px;
-      margin-bottom: 8px;
-      border-radius: 4px;
-    }
+        /* 頂部設定列 */
+        .settings-bar {
+            background: var(--card-bg);
+            border-bottom: 1px solid var(--border-color);
+            padding: 12px 16px;
+            flex-shrink: 0;
+        }
 
-    footer {
-      flex-shrink: 0;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      padding: 2px 0;
-      font-size: 11px;
-      color: var(--text-sub);
-      opacity: 0.85;
-    }
-    .ver-badge {
-      background: #1e2025;
-      border: 1px solid var(--border);
-      padding: 2px 10px;
-      border-radius: 12px;
-      font-family: monospace;
-    }
-  </style>
+        details {
+            width: 100%;
+        }
+
+        summary {
+            cursor: pointer;
+            font-weight: 600;
+            color: var(--primary-color);
+            padding: 8px 0;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        summary::-webkit-details-marker {
+            display: none;
+        }
+
+        summary::before {
+            content: '⚙️';
+            font-size: 18px;
+        }
+
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 12px;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-color);
+        }
+
+        .setting-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .setting-item label {
+            font-size: 12px;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        select, input[type="text"], input[type="password"] {
+            padding: 8px 12px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 14px;
+            background: var(--card-bg);
+        }
+
+        input[type="range"] {
+            width: 100%;
+            height: 6px;
+            border-radius: 3px;
+            background: var(--border-color);
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--primary-color);
+            cursor: pointer;
+        }
+
+        /* 控制按鈕區 */
+        .controls {
+            display: flex;
+            gap: 12px;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid var(--border-color);
+            flex-wrap: wrap;
+        }
+
+        button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-start {
+            background: var(--secondary-color);
+            color: white;
+        }
+
+        .btn-start:hover:not(:disabled) {
+            background: #2d9249;
+        }
+
+        .btn-stop {
+            background: var(--error-color);
+            color: white;
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            background: #d33426;
+        }
+
+        .btn-export {
+            background: var(--primary-color);
+            color: white;
+        }
+
+        .btn-export:hover:not(:disabled) {
+            background: #3367d6;
+        }
+
+        /* 雙軌顯示區 */
+        .tracks-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            padding: 12px;
+            gap: 12px;
+        }
+
+        .track {
+            background: var(--card-bg);
+            border-radius: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .track-header {
+            background: linear-gradient(135deg, var(--primary-color), #3367d6);
+            color: white;
+            padding: 10px 16px;
+            font-weight: 600;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .track-header.track2 {
+            background: linear-gradient(135deg, var(--secondary-color), #2d9249);
+        }
+
+        .track-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+            font-size: var(--content-font-size);
+            line-height: 1.6;
+        }
+
+        .transcript-item {
+            margin-bottom: 12px;
+            padding: 10px 12px;
+            background: var(--bg-color);
+            border-radius: 8px;
+            border-left: 3px solid var(--primary-color);
+        }
+
+        .transcript-item.track2 {
+            border-left-color: var(--secondary-color);
+        }
+
+        .transcript-original {
+            font-weight: 500;
+            color: var(--text-color);
+            margin-bottom: 4px;
+        }
+
+        .transcript-translation {
+            color: var(--text-secondary);
+            font-size: 0.95em;
+        }
+
+        .summary-points {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed var(--border-color);
+        }
+
+        .summary-points li {
+            margin: 4px 0;
+            color: var(--text-secondary);
+            font-size: 0.9em;
+        }
+
+        /* 切片倒數 */
+        .chunk-progress {
+            padding: 8px 16px;
+            background: var(--card-bg);
+            border-top: 1px solid var(--border-color);
+        }
+
+        .progress-bar-container {
+            height: 6px;
+            background: var(--border-color);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 4px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--secondary-color), #2d9249);
+            width: 100%;
+            transition: width 0.1s linear;
+        }
+
+        .progress-text {
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-align: right;
+        }
+
+        /* 除錯面板 */
+        .debug-panel {
+            background: #1a1a2e;
+            color: #00ff88;
+            padding: 12px 16px;
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            max-height: 120px;
+            overflow-y: auto;
+            border-top: 1px solid var(--border-color);
+            flex-shrink: 0;
+        }
+
+        .debug-log {
+            margin: 2px 0;
+        }
+
+        .debug-log.error {
+            color: #ff6b6b;
+        }
+
+        .debug-log.warning {
+            color: #ffd93d;
+        }
+
+        .debug-log.info {
+            color: #6bcbff;
+        }
+
+        /* 頁尾 */
+        footer {
+            background: var(--card-bg);
+            border-top: 1px solid var(--border-color);
+            padding: 8px 16px;
+            text-align: center;
+            font-size: 11px;
+            color: var(--text-secondary);
+            flex-shrink: 0;
+        }
+
+        .version-badge {
+            display: inline-block;
+            background: var(--bg-color);
+            padding: 4px 12px;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+        }
+
+        /* 狀態指示器 */
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--border-color);
+            margin-right: 6px;
+        }
+
+        .status-indicator.active {
+            background: var(--secondary-color);
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-indicator.error {
+            background: var(--error-color);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* 響應式設計 */
+        @media (max-width: 768px) {
+            .settings-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .controls {
+                flex-direction: column;
+            }
+
+            button {
+                width: 100%;
+                justify-content: center;
+            }
+
+            .tracks-container {
+                padding: 8px;
+                gap: 8px;
+            }
+
+            .track-content {
+                padding: 12px;
+            }
+        }
+
+        /* 載入動畫 */
+        .loading-spinner {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
 </head>
 <body>
+    <!-- 頂部設定列 -->
+    <div class="settings-bar">
+        <details>
+            <summary>系統設定</summary>
+            <div class="settings-grid">
+                <div class="setting-item">
+                    <label>目標語言</label>
+                    <select id="targetLanguage">
+                        <option value="zh-TW" selected>繁體中文</option>
+                        <option value="zh-CN">簡體中文</option>
+                        <option value="ja">日文</option>
+                        <option value="en">英文</option>
+                    </select>
+                </div>
 
-  <header>
-    <details>
-      <summary>⚙️ 展開／收合偏好設定（模型、語言、版面比例、字級）</summary>
-      <div class="settings-grid">
-        <!-- 目標語言 -->
-        <div class="config-group">
-          <label for="targetLanguage">翻譯目標語言：</label>
-          <select id="targetLanguage">
-            <option value="繁體中文" selected>繁體中文</option>
-            <option value="簡體中文">簡體中文</option>
-            <option value="日文">日文</option>
-            <option value="英文">英文</option>
-          </select>
-        </div>
+                <div class="setting-item">
+                    <label>第一軌模型 (即時)</label>
+                    <select id="track1Model">
+                        <option value="gemini-2.0-flash" selected>Gemini 2.0 Flash</option>
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                    </select>
+                </div>
 
-        <!-- 第一層 Live 模型 -->
-        <div class="config-group">
-          <label for="liveModelSelect">第一層 Live 模型：</label>
-          <select id="liveModelSelect">
-            <option value="models/gemini-2.0-flash-realtime-exp" selected>Gemini 3.5 Live (Realtime 核心)</option>
-            <option value="models/gemini-2.0-flash">Gemini 2.0 Flash</option>
-          </select>
-        </div>
+                <div class="setting-item">
+                    <label>第二軌模型 (精翻)</label>
+                    <select id="track2Model">
+                        <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash (推薦)</option>
+                        <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                        <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
+                        <option value="gemini-3.0-flash">Gemini 3.0 Flash</option>
+                        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                        <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
+                    </select>
+                </div>
 
-        <!-- 第二層精翻模型 -->
-        <div class="config-group">
-          <label for="modelSelect">第二層精翻模型：</label>
-          <select id="modelSelect">
-            <option value="gemini-2.0-flash" selected>Gemini 2.0 Flash (推薦，穩定極速)</option>
-            <option value="gemini-1.5-flash">Gemini 1.5 Flash (經典穩定)</option>
-            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
-            <option value="gemini-3.0-flash">Gemini 3.0 Flash</option>
-            <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-            <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
-            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
-          </select>
-        </div>
+                <div class="setting-item">
+                    <label>切片週期 (秒)</label>
+                    <select id="chunkDuration">
+                        <option value="10" selected>10 秒 (預設)</option>
+                        <option value="20">20 秒</option>
+                        <option value="30">30 秒</option>
+                        <option value="60">60 秒</option>
+                    </select>
+                </div>
 
-        <!-- 切片時間（預設 10 秒） -->
-        <div class="config-group">
-          <label for="chunkDurationSelect">第二層切片頻率：</label>
-          <select id="chunkDurationSelect">
-            <option value="10" selected>每 10 秒硬切片 (預設)</option>
-            <option value="20">每 20 秒硬切片</option>
-            <option value="30">每 30 秒硬切片</option>
-            <option value="60">每 60 秒硬切片</option>
-          </select>
-        </div>
+                <div class="setting-item">
+                    <label>字級大小：<span id="fontSizeValue">15</span>px</label>
+                    <input type="range" id="fontSize" min="12" max="26" value="15">
+                </div>
 
-        <!-- 字級大小 -->
-        <div class="config-group">
-          <label>字級大小：</label>
-          <div class="range-group">
-            <input type="range" id="fontSizeRange" min="12" max="26" value="15" />
-            <span class="range-val" id="fontSizeVal">15px</span>
-          </div>
-        </div>
+                <div class="setting-item">
+                    <label>版面比例 (第一軌：第二軌)</label>
+                    <input type="range" id="layoutRatio" min="20" max="80" value="50">
+                </div>
 
-        <!-- 視窗高度比例 -->
-        <div class="config-group full-width">
-          <label>兩層高度比例 (第1層 / 第2層)：</label>
-          <div class="range-group">
-            <input type="range" id="ratioRange" min="20" max="80" value="50" />
-            <span class="range-val" id="ratioVal">5:5</span>
-          </div>
-        </div>
+                <div class="setting-item">
+                    <label>API Key</label>
+                    <input type="password" id="apiKey" placeholder="輸入您的 Gemini API Key">
+                </div>
+            </div>
 
-        <!-- API KEY -->
-        <div class="config-group full-width">
-          <label for="apiKey">Gemini API Key：</label>
-          <input type="password" id="apiKey" placeholder="若程式內未寫死，請貼上 Key" />
-        </div>
-      </div>
-    </details>
-
-    <div class="controls">
-      <button id="btn-toggle">啟動雙軌同傳系統</button>
-      <button id="btn-export" type="button">匯出記錄</button>
+            <div class="controls">
+                <button class="btn-start" id="btnStart">
+                    <span>🎤</span> 啟動收音
+                </button>
+                <button class="btn-stop" id="btnStop" disabled>
+                    <span>⏹️</span> 停止收音
+                </button>
+                <button class="btn-export" id="btnExport" disabled>
+                    <span>📥</span> 匯出記錄
+                </button>
+            </div>
+        </details>
     </div>
 
-    <div class="status-bar">
-      <span id="liveStatus">第一軌：待機</span>
-      <span id="chunkTimer">第二軌切片倒數：10s</span>
+    <!-- 雙軌顯示區 -->
+    <div class="tracks-container">
+        <!-- 第一軌：即時同傳 -->
+        <div class="track" id="track1" style="flex: var(--track1-height);">
+            <div class="track-header">
+                <span class="status-indicator" id="track1Status"></span>
+                第一軌：即時同傳 (Fast Live Stream)
+            </div>
+            <div class="track-content" id="track1Content">
+                <div style="color: var(--text-secondary); text-align: center; padding: 40px 20px;">
+                    尚未啟動收音<br>
+                    點擊「啟動收音」開始即時同傳
+                </div>
+            </div>
+        </div>
+
+        <!-- 第二軌：精翻摘要 -->
+        <div class="track" id="track2" style="flex: var(--track2-height);">
+            <div class="track-header track2">
+                <span class="status-indicator" id="track2Status"></span>
+                第二軌：時間軸精翻卡片 (Deep Hard Chunking)
+            </div>
+            <div class="track-content" id="track2Content">
+                <div style="color: var(--text-secondary); text-align: center; padding: 40px 20px;">
+                    等待切片完成<br>
+                    每 <span id="chunkDurationDisplay">10</span> 秒自動生成精翻卡片
+                </div>
+            </div>
+        </div>
     </div>
-    <div class="debug-log" id="debugLog">日誌：系統就緒，請點擊啟動...</div>
-  </header>
 
-  <div class="grid-container">
-    <div class="panel" id="panelLive">
-      <div class="panel-header">
-        <span>第一層：即時同傳 (原文 + 括號翻譯)</span>
-        <span class="tag tag-live" id="liveModelTag">Live WS</span>
-      </div>
-      <div class="content-box" id="liveOutput">等待語音輸入...（說完一句話稍微停頓約 1 秒即可送出）</div>
+    <!-- 切片倒數 -->
+    <div class="chunk-progress" id="chunkProgress" style="display: none;">
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div class="progress-text" id="progressText">倒數：10.0 秒</div>
     </div>
 
-    <div class="panel" id="panelDeep">
-      <div class="panel-header">
-        <span id="deepPanelTitle">第二層：10 秒硬切精翻</span>
-        <span class="tag tag-deep" id="deepModelTag">Gemini 2.0 Flash</span>
-      </div>
-      <div class="content-box" id="deepOutput">等待硬切音訊處理...</div>
+    <!-- 除錯面板 -->
+    <div class="debug-panel" id="debugPanel">
+        <div class="debug-log info">系統就緒，等待啟動...</div>
     </div>
-  </div>
 
-  <footer>
-    <span class="ver-badge" id="appVersion">v2.0.0 (2026.09.02-stable-rebuild)</span>
-  </footer>
+    <!-- 頁尾 -->
+    <footer>
+        <span class="version-badge">v1.6.0 (2026.09.02-r3)</span>
+    </footer>
 
-  <script>
-    // 若要固定 Key 免重複輸入，可直接在此填入（GitHub 倉庫請設為 Private）
-    const HARDCODED_API_KEY = ""; 
+    <script>
+        // ==================== 全域狀態 ====================
+        const state = {
+            isRecording: false,
+            isSetupComplete: false,
+            audioContext: null,
+            mediaStream: null,
+            scriptProcessor: null,
+            webSocket: null,
+            pcmChunkBuffer: [],
+            chunkStartTime: 0,
+            chunkDuration: 10000, // 毫秒
+            track1Transcripts: [],
+            track2Transcripts: [],
+            wakeLock: null,
+            chunkTimer: null,
+            targetLanguage: 'zh-TW'
+        };
 
-    let isRunning = false;
-    let isSetupComplete = false;
-    let audioContext = null;
-    let micStream = null;
-    let scriptProcessor = null;
-    let gainNode = null;
-    let liveSocket = null;
-    let pcmChunkBuffer = [];
-    let countdownInterval = null;
-    let chunkDuration = 10;
-    let timeLeft = 10;
+        // 語言對應表
+        const languageMap = {
+            'zh-TW': '繁體中文',
+            'zh-CN': '簡體中文',
+            'ja': '日文',
+            'en': '英文'
+        };
 
-    const apiKeyInput = document.getElementById('apiKey');
-    const targetLangSelect = document.getElementById('targetLanguage');
-    const liveModelSelect = document.getElementById('liveModelSelect');
-    const modelSelect = document.getElementById('modelSelect');
-    const chunkDurationSelect = document.getElementById('chunkDurationSelect');
-    const btnToggle = document.getElementById('btn-toggle');
-    const btnExport = document.getElementById('btn-export');
-    const liveStatus = document.getElementById('liveStatus');
-    const chunkTimer = document.getElementById('chunkTimer');
-    const liveOutput = document.getElementById('liveOutput');
-    const deepOutput = document.getElementById('deepOutput');
-    const debugLog = document.getElementById('debugLog');
-    const deepPanelTitle = document.getElementById('deepPanelTitle');
-    const deepModelTag = document.getElementById('deepModelTag');
-    const liveModelTag = document.getElementById('liveModelTag');
-
-    const panelLive = document.getElementById('panelLive');
-    const panelDeep = document.getElementById('panelDeep');
-    const fontSizeRange = document.getElementById('fontSizeRange');
-    const fontSizeVal = document.getElementById('fontSizeVal');
-    const ratioRange = document.getElementById('ratioRange');
-    const ratioVal = document.getElementById('ratioVal');
-
-    function log(msg) {
-      debugLog.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-      console.log(msg);
-    }
-
-    if (HARDCODED_API_KEY) apiKeyInput.value = HARDCODED_API_KEY;
-    else if (localStorage.getItem('gemini_key')) apiKeyInput.value = localStorage.getItem('gemini_key');
-    apiKeyInput.addEventListener('change', () => localStorage.setItem('gemini_key', apiKeyInput.value.trim()));
-
-    fontSizeRange.addEventListener('input', (e) => {
-      const size = e.target.value;
-      fontSizeVal.textContent = `${size}px`;
-      document.documentElement.style.setProperty('--content-font-size', `${size}px`);
-    });
-
-    ratioRange.addEventListener('input', (e) => {
-      const liveRatio = parseInt(e.target.value, 10);
-      const deepRatio = 100 - liveRatio;
-      panelLive.style.flex = liveRatio;
-      panelDeep.style.flex = deepRatio;
-      ratioVal.textContent = `${Math.round(liveRatio/10)}:${Math.round(deepRatio/10)}`;
-    });
-
-    modelSelect.addEventListener('change', () => { deepModelTag.textContent = modelSelect.value; });
-    liveModelSelect.addEventListener('change', () => { liveModelTag.textContent = liveModelSelect.value.replace('models/', ''); });
-
-    chunkDurationSelect.addEventListener('change', () => {
-      chunkDuration = parseInt(chunkDurationSelect.value, 10);
-      timeLeft = chunkDuration;
-      chunkTimer.textContent = `第二軌切片倒數：${timeLeft}s`;
-      deepPanelTitle.textContent = `第二層：${chunkDuration} 秒硬切精翻`;
-    });
-
-    // 軟體即時降採樣至 16kHz Int16
-    function downsampleTo16k(inputData, inputSampleRate) {
-      if (inputSampleRate === 16000) {
-        const pcm16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          let s = Math.max(-1, Math.min(1, inputData[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-        return pcm16;
-      }
-      const ratio = inputSampleRate / 16000;
-      const newLength = Math.round(inputData.length / ratio);
-      const result = new Int16Array(newLength);
-      for (let i = 0; i < newLength; i++) {
-        const index = Math.round(i * ratio);
-        let s = Math.max(-1, Math.min(1, inputData[index] || 0));
-        result[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-      }
-      return result;
-    }
-
-    btnToggle.addEventListener('click', async () => {
-      const key = apiKeyInput.value.trim() || HARDCODED_API_KEY;
-      if (!isRunning) {
-        if (!key) return alert('請先填入 API Key！');
-        try {
-          chunkDuration = parseInt(chunkDurationSelect.value, 10);
-          timeLeft = chunkDuration;
-          await startProcessing(key);
-          btnToggle.textContent = '停止收音';
-          btnToggle.classList.add('recording');
-          isRunning = true;
-          if ('wakeLock' in navigator) navigator.wakeLock.request('screen').catch(() => {});
-        } catch (err) {
-          log(`啟動失敗: ${err.message}`);
-        }
-      } else {
-        btnToggle.textContent = '啟動雙軌同傳系統';
-        btnToggle.classList.remove('recording');
-        isRunning = false;
-        await stopProcessing(key);
-      }
-    });
-
-    async function startProcessing(apiKey) {
-      liveOutput.textContent = '';
-      deepOutput.textContent = '';
-      pcmChunkBuffer = [];
-      isSetupComplete = false;
-      const targetLang = targetLangSelect.value;
-      const liveModelName = liveModelSelect.value;
-      liveModelTag.textContent = liveModelName.replace('models/', '');
-      deepModelTag.textContent = modelSelect.value;
-
-      // 1. 標準喚醒 Web Audio (不指定 sampleRate，相容 iOS Safari 限制)
-      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      audioContext = new AudioContextClass();
-      if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-      }
-      const hwSampleRate = audioContext.sampleRate;
-      log(`音訊硬體啟動: ${hwSampleRate}Hz (將自動重採樣至 16kHz)`);
-
-      // 2. 獲取麥克風
-      try {
-        micStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-            echoCancellation: false,
-            noiseSuppression: false,
-            autoGainControl: false
-          }
-        });
-      } catch (e) {
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      }
-
-      // 3. 建立音訊分流管線與靜音防回授
-      const source = audioContext.createMediaStreamSource(micStream);
-      scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
-      gainNode = audioContext.createGain();
-      gainNode.gain.value = 0; // 靜音，防止麥克風聲音從喇叭輸出造成嘯叫
-
-      source.connect(scriptProcessor);
-      scriptProcessor.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-
-      scriptProcessor.onaudioprocess = (e) => {
-        if (!isRunning) return;
-        const inputData = e.inputBuffer.getChannelData(0);
-
-        // 轉換為標準 16kHz PCM Int16
-        const pcm16 = downsampleTo16k(inputData, hwSampleRate);
-
-        // 第一軌：即時發送
-        if (liveSocket && liveSocket.readyState === WebSocket.OPEN && isSetupComplete) {
-          try {
-            const base64Audio = int16ToBase64(pcm16);
-            liveSocket.send(JSON.stringify({
-              realtimeInput: {
-                mediaChunks: [{ mimeType: "audio/pcm;rate=16000", data: base64Audio }]
-              }
-            }));
-          } catch (err) {}
+        // ==================== 工具函數 ====================
+        function log(message, type = 'info') {
+            const debugPanel = document.getElementById('debugPanel');
+            const logEntry = document.createElement('div');
+            logEntry.className = `debug-log ${type}`;
+            const timestamp = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            debugPanel.appendChild(logEntry);
+            debugPanel.scrollTop = debugPanel.scrollHeight;
         }
 
-        // 第二軌：存入 16kHz 緩衝池
-        pcmChunkBuffer.push(pcm16);
-      };
-
-      // 4. 第二軌：硬切計時器立即啟動 (核心保障)
-      startChunkTimer(apiKey);
-
-      // 5. 第一軌：獨立非同步啟動
-      try {
-        initGeminiLiveWebSocket(apiKey, targetLang, liveModelName);
-      } catch (err) {
-        log(`第一軌啟動警告: ${err.message}`);
-        liveStatus.textContent = '第一軌：未啟動（第二軌正常運行）';
-      }
-    }
-
-    function initGeminiLiveWebSocket(apiKey, targetLang, liveModelName) {
-      log(`正在建立第一軌連線 (${liveModelName})...`);
-      isSetupComplete = false;
-      const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
-      liveSocket = new WebSocket(wsUrl);
-
-      liveSocket.onopen = () => {
-        log(`第一軌 WebSocket 已連接，發送 Setup...`);
-        liveStatus.textContent = '第一軌：協商中...';
-        
-        liveSocket.send(JSON.stringify({
-          setup: {
-            model: liveModelName,
-            generationConfig: { 
-              responseModalities: ["TEXT"] 
-            },
-            systemInstruction: {
-              parts: [{ 
-                text: `你是專業同傳口譯。請將聽到的每一句原文先完整寫出，緊接著在半形括號內附上${targetLang}翻譯。格式嚴格為：「原文 (翻譯後的${targetLang})」。不要輸出任何多餘寒暄、解釋或標註。` 
-              }]
+        function float32ToInt16PCM(float32Array) {
+            const int16Array = new Int16Array(float32Array.length);
+            for (let i = 0; i < float32Array.length; i++) {
+                const s = Math.max(-1, Math.min(1, float32Array[i]));
+                int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
             }
-          }
-        }));
-      };
+            return int16Array;
+        }
 
-      liveSocket.onmessage = async (event) => {
-        try {
-          let rawData = event.data;
-          if (rawData instanceof Blob) rawData = await rawData.text();
-          const res = JSON.parse(rawData);
-
-          if (res.setupComplete) {
-            isSetupComplete = true;
-            log('第一軌握手完成 (setupComplete)！音訊傳輸中。');
-            liveStatus.textContent = '第一軌：即時同傳中';
-            return;
-          }
-
-          const parts = res.serverContent?.modelTurn?.parts;
-          if (parts && parts.length > 0) {
-            for (let part of parts) {
-              if (part.text) {
-                liveOutput.textContent += part.text + " ";
-                liveOutput.scrollTop = liveOutput.scrollHeight;
-              }
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i++) {
+                binary += String.fromCharCode(bytes[i]);
             }
-          }
-        } catch (err) {
-          log(`第一軌解析通知: ${err.message}`);
+            return window.btoa(binary);
         }
-      };
 
-      liveSocket.onerror = () => { log('第一軌連線異常'); };
-      liveSocket.onclose = (e) => {
-        isSetupComplete = false;
-        log(`第一軌已關閉 (${e.code} ${e.reason || ''}) - 第二軌不受影響繼續運行`);
-        liveStatus.textContent = '第一軌：已停止（第二軌正常運行）';
-      };
-    }
+        function createWavHeader(dataLength, sampleRate = 16000) {
+            const header = new ArrayBuffer(44);
+            const view = new DataView(header);
 
-    function startChunkTimer(apiKey) {
-      clearInterval(countdownInterval);
-      countdownInterval = setInterval(() => {
-        timeLeft--;
-        chunkTimer.textContent = `第二軌切片倒數：${timeLeft}s`;
-        if (timeLeft <= 0) {
-          timeLeft = chunkDuration;
-          sendAudioChunkToDeepAPI(apiKey, chunkDuration);
+            // RIFF identifier
+            writeString(view, 0, 'RIFF');
+            // file length minus RIFF identifier length and file description length
+            view.setUint32(4, 36 + dataLength, true);
+            // RIFF type
+            writeString(view, 8, 'WAVE');
+            // format chunk identifier
+            writeString(view, 12, 'fmt ');
+            // format chunk length
+            view.setUint32(16, 16, true);
+            // sample format (raw)
+            view.setUint16(20, 1, true);
+            // channel count
+            view.setUint16(22, 1, true);
+            // sample rate
+            view.setUint32(24, sampleRate, true);
+            // byte rate (sample rate * block align)
+            view.setUint32(28, sampleRate * 2, true);
+            // block align (channel count * bytes per sample)
+            view.setUint16(32, 2, true);
+            // bits per sample
+            view.setUint16(34, 16, true);
+            // data chunk identifier
+            writeString(view, 36, 'data');
+            // data chunk length
+            view.setUint32(40, dataLength, true);
+
+            return header;
         }
-      }, 1000);
-    }
 
-    async function sendAudioChunkToDeepAPI(apiKey, durationSec) {
-      if (pcmChunkBuffer.length === 0) return;
+        function writeString(view, offset, string) {
+            for (let i = 0; i < string.length; i++) {
+                view.setUint8(offset + i, string.charCodeAt(i));
+            }
+        }
 
-      const currentChunks = [...pcmChunkBuffer];
-      pcmChunkBuffer = [];
-      const targetLang = targetLangSelect.value;
-      const selectedModel = modelSelect.value;
+        function createWavBlob(pcmData, sampleRate = 16000) {
+            const wavHeader = createWavHeader(pcmData.length * 2, sampleRate);
+            const wavBuffer = new ArrayBuffer(wavHeader.byteLength + pcmData.length * 2);
+            const wavView = new DataView(wavBuffer);
 
-      let totalLength = currentChunks.reduce((acc, c) => acc + c.length, 0);
-      let mergedPcm = new Int16Array(totalLength);
-      let offset = 0;
-      for (let c of currentChunks) {
-        mergedPcm.set(c, offset);
-        offset += c.length;
-      }
+            // Copy header
+            for (let i = 0; i < wavHeader.byteLength; i++) {
+                wavView.setUint8(i, new DataView(wavHeader).getUint8(i));
+            }
 
-      // 已精確重採樣為 16kHz
-      const wavBlob = encodeWAV(mergedPcm, 16000);
-      const base64Wav = await blobToBase64(wavBlob);
+            // Copy PCM data (convert Int16 to little-endian)
+            for (let i = 0; i < pcmData.length; i++) {
+                wavView.setInt16(44 + i * 2, pcmData[i], true);
+            }
 
-      const timeTag = new Date().toLocaleTimeString();
-      const card = document.createElement('div');
-      card.className = 'chunk-card';
-      card.innerHTML = `<div style="font-size:11px;color:#9aa0a6;">[${timeTag}] ${durationSec}s 音訊分析中 (${selectedModel})...</div><div>處理中...</div>`;
-      deepOutput.prepend(card);
+            return new Blob([wavBuffer], { type: 'audio/wav' });
+        }
 
-      try {
-        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [
-                { 
-                  text: `這是過去 ${durationSec} 秒的環境/廣播錄音。請辨識所有講話與廣播內容並忽略雜訊。輸出格式要求：\n1. 【雙語對照】：每一句原文後面緊跟半形括號附上${targetLang}翻譯，格式為：原文 (${targetLang}翻譯)。\n2. 【重點摘要】：以${targetLang}條列 1~3 點關鍵廣播要點與核心資訊。` 
+        // ==================== 第一軌：WebSocket 即時同傳 ====================
+        async function startTrack1() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            if (!apiKey) {
+                log('錯誤：請先輸入 API Key', 'error');
+                return;
+            }
+
+            const model = document.getElementById('track1Model').value;
+            const targetLang = languageMap[state.targetLanguage];
+
+            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+
+            try {
+                state.webSocket = new WebSocket(wsUrl);
+
+                state.webSocket.onopen = () => {
+                    log('WebSocket 連線已建立', 'info');
+                    sendSetupMessage(model, targetLang);
+                };
+
+                state.webSocket.onmessage = (event) => {
+                    try {
+                        const response = JSON.parse(event.data);
+                        
+                        // 檢查 setupComplete
+                        if (response.setupComplete) {
+                            state.isSetupComplete = true;
+                            log('WebSocket 協商完成，開始傳送音訊', 'info');
+                            return;
+                        }
+
+                        // 處理轉錄結果
+                        if (response.transcript && response.transcript.results) {
+                            for (const result of response.transcript.results) {
+                                if (result.isFinal && result.alternatives && result.alternatives.length > 0) {
+                                    const text = result.alternatives[0].transcript;
+                                    if (text.trim()) {
+                                        addTrack1Transcript(text, state.targetLanguage);
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        log(`WebSocket 訊息解析錯誤：${e.message}`, 'error');
+                    }
+                };
+
+                state.webSocket.onerror = (error) => {
+                    log(`WebSocket 錯誤：${error.type}`, 'error');
+                    document.getElementById('track1Status').className = 'status-indicator error';
+                };
+
+                state.webSocket.onclose = (event) => {
+                    log(`WebSocket 已關閉：代碼 ${event.code}`, 'warning');
+                    state.isSetupComplete = false;
+                    document.getElementById('track1Status').className = 'status-indicator';
+                };
+
+            } catch (error) {
+                log(`WebSocket 連線失敗：${error.message}`, 'error');
+            }
+        }
+
+        function sendSetupMessage(model, targetLang) {
+            const setupMessage = {
+                setup: {
+                    model: `models/${model}`,
+                    generationConfig: {
+                        responseModalities: ['TEXT'],
+                        speechConfig: {
+                            languageCode: 'zh-TW'
+                        }
+                    },
+                    systemInstruction: {
+                        parts: [{
+                            text: `你是一個專業的即時同聲傳譯系統。請將所有輸入的語音即時翻譯成${targetLang}。輸出格式嚴格遵守：原文 (目標語言翻譯)。不要輸出任何問候語、解釋或額外內容。只輸出翻譯結果。`
+                        }]
+                    }
+                }
+            };
+
+            state.webSocket.send(JSON.stringify(setupMessage));
+            log('已傳送 setup 封包', 'info');
+        }
+
+        function sendAudioChunk(audioData) {
+            if (!state.webSocket || state.webSocket.readyState !== WebSocket.OPEN || !state.isSetupComplete) {
+                return;
+            }
+
+            const base64Audio = arrayBufferToBase64(audioData.buffer);
+
+            const audioMessage = {
+                realtimeInput: {
+                    mediaChunks: [{
+                        mimeType: 'audio/pcm; rate=16000',
+                        data: base64Audio
+                    }]
+                }
+            };
+
+            try {
+                state.webSocket.send(JSON.stringify(audioMessage));
+            } catch (error) {
+                log(`傳送音訊失敗：${error.message}`, 'error');
+            }
+        }
+
+        function addTrack1Transcript(text, targetLang) {
+            const timestamp = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+            const item = {
+                timestamp,
+                text,
+                targetLang
+            };
+            state.track1Transcripts.push(item);
+
+            const contentDiv = document.getElementById('track1Content');
+            
+            // 清除初始提示
+            if (contentDiv.querySelector('div[style*="text-align: center"]')) {
+                contentDiv.innerHTML = '';
+            }
+
+            const transcriptDiv = document.createElement('div');
+            transcriptDiv.className = 'transcript-item';
+            transcriptDiv.innerHTML = `
+                <div class="transcript-original">${text}</div>
+                <div class="transcript-translation">[${timestamp}] ${targetLang}</div>
+            `;
+
+            contentDiv.appendChild(transcriptDiv);
+            contentDiv.scrollTop = contentDiv.scrollHeight;
+
+            log(`第一軌收到轉錄：${text.substring(0, 50)}...`, 'info');
+        }
+
+        // ==================== 第二軌：硬切精翻 ====================
+        async function processChunk() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            if (!apiKey || state.pcmChunkBuffer.length === 0) {
+                return;
+            }
+
+            const model = document.getElementById('track2Model').value;
+            const targetLang = languageMap[state.targetLanguage];
+            const chunkDuration = document.getElementById('chunkDuration').value;
+
+            log(`開始處理第二軌切片 (${chunkDuration}秒)`, 'info');
+
+            // 合併所有 PCM 數據
+            const totalLength = state.pcmChunkBuffer.reduce((acc, chunk) => acc + chunk.length, 0);
+            const mergedPCM = new Int16Array(totalLength);
+            let offset = 0;
+            for (const chunk of state.pcmChunkBuffer) {
+                mergedPCM.set(chunk, offset);
+                offset += chunk.length;
+            }
+
+            // 清空緩衝區
+            state.pcmChunkBuffer = [];
+
+            // 建立 WAV 檔案
+            const wavBlob = createWavBlob(mergedPCM, 16000);
+
+            // 轉換為 base64
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const base64Audio = reader.result.split(',')[1];
+
+                try {
+                    const response = await fetch(
+                        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+                        {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json'
+                            },
+                            body: JSON.stringify({
+                                contents: [{
+                                    parts: [{
+                                        inlineData: {
+                                            mimeType: 'audio/wav',
+                                            data: base64Audio
+                                        }
+                                    }]
+                                }],
+                                generationConfig: {
+                                    temperature: 0.3,
+                                    maxOutputTokens: 2048
+                                },
+                                systemInstruction: {
+                                    parts: [{
+                                        text: `你是一個專業的語音轉文字與翻譯系統。請完成以下任務：
+1. 將音訊中的所有語音轉寫並翻譯成${targetLang}
+2. 輸出格式：原文 (目標語言翻譯)
+3. 針對廣播資訊、關鍵決策、數字或待辦事項進行 1~3 點精煉條列
+4. 不要輸出任何問候語或解釋，直接給出結果
+
+請用 JSON 格式回覆：
+{
+  "transcript": "完整的雙語對照文字",
+  "summary": ["重點 1", "重點 2", "重點 3"]
+}`
+                                    }]
+                                }
+                            })
+                        }
+                    );
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+
+                    const data = await response.json();
+                    
+                    if (data.candidates && data.candidates[0] && data.candidates[0].content) {
+                        const text = data.candidates[0].content.parts[0].text;
+                        
+                        // 嘗試解析 JSON
+                        let parsed;
+                        try {
+                            const jsonMatch = text.match(/\{[\s\S]*\}/);
+                            if (jsonMatch) {
+                                parsed = JSON.parse(jsonMatch[0]);
+                            }
+                        } catch (e) {
+                            parsed = { transcript: text, summary: [] };
+                        }
+
+                        addTrack2Transcript(parsed.transcript || text, parsed.summary || [], state.targetLanguage);
+                        log('第二軌切片處理完成', 'info');
+                    }
+
+                } catch (error) {
+                    log(`第二軌 API 呼叫失敗：${error.message}`, 'error');
+                }
+            };
+            reader.readAsDataURL(wavBlob);
+        }
+
+        function addTrack2Transcript(transcript, summary, targetLang) {
+            const timestamp = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+            const item = {
+                timestamp,
+                transcript,
+                summary,
+                targetLang
+            };
+            state.track2Transcripts.push(item);
+
+            const contentDiv = document.getElementById('track2Content');
+            
+            // 清除初始提示
+            if (contentDiv.querySelector('div[style*="text-align: center"]')) {
+                contentDiv.innerHTML = '';
+            }
+
+            const transcriptDiv = document.createElement('div');
+            transcriptDiv.className = 'transcript-item track2';
+            
+            let summaryHTML = '';
+            if (summary && summary.length > 0) {
+                summaryHTML = `
+                    <div class="summary-points">
+                        <strong>📌 重點摘要：</strong>
+                        <ul style="margin: 4px 0 0 20px; padding: 0;">
+                            ${summary.map(point => `<li>${point}</li>`).join('')}
+                        </ul>
+                    </div>
+                `;
+            }
+
+            transcriptDiv.innerHTML = `
+                <div class="transcript-original">${transcript}</div>
+                <div class="transcript-translation">[${timestamp}] 切片完成 • ${targetLang}</div>
+                ${summaryHTML}
+            `;
+
+            contentDiv.appendChild(transcriptDiv);
+            contentDiv.scrollTop = contentDiv.scrollHeight;
+        }
+
+        function startChunkTimer() {
+            state.chunkStartTime = Date.now();
+            const chunkDuration = parseInt(document.getElementById('chunkDuration').value) * 1000;
+            document.getElementById('chunkDurationDisplay').textContent = chunkDuration / 1000;
+
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+
+            state.chunkTimer = setInterval(() => {
+                const elapsed = Date.now() - state.chunkStartTime;
+                const remaining = Math.max(0, chunkDuration - elapsed);
+                const progress = (elapsed / chunkDuration) * 100;
+
+                progressBar.style.width = `${Math.min(100, progress)}%`;
+                progressText.textContent = `倒數：${(remaining / 1000).toFixed(1)} 秒`;
+
+                if (remaining <= 0) {
+                    processChunk();
+                    state.chunkStartTime = Date.now();
+                }
+            }, 100);
+
+            document.getElementById('chunkProgress').style.display = 'block';
+        }
+
+        function stopChunkTimer() {
+            if (state.chunkTimer) {
+                clearInterval(state.chunkTimer);
+                state.chunkTimer = null;
+            }
+            document.getElementById('chunkProgress').style.display = 'none';
+        }
+
+        // ==================== 音訊處理 ====================
+        async function startAudioCapture() {
+            const constraints = {
+                audio: {
+                    echoCancellation: false,
+                    noiseSuppression: false,
+                    autoGainControl: false,
+                    channelCount: 1,
+                    sampleRate: 16000
                 },
-                { inlineData: { mimeType: "audio/wav", data: base64Wav } }
-              ]
-            }]
-          })
-        });
+                video: false
+            };
 
-        if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.error?.message || `HTTP ${response.status}`);
+            try {
+                state.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+                log('麥克風存取已授權', 'info');
+
+                state.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 16000
+                });
+
+                // iOS Safari 防護
+                if (state.audioContext.state === 'suspended') {
+                    await state.audioContext.resume();
+                    log('AudioContext 已恢復', 'info');
+                }
+
+                const source = state.audioContext.createMediaStreamSource(state.mediaStream);
+
+                // 使用 AudioWorklet 替代 ScriptProcessor (更現代的做法)
+                state.scriptProcessor = state.audioContext.createScriptProcessor(4096, 1, 1);
+                source.connect(state.scriptProcessor);
+                state.scriptProcessor.connect(state.audioContext.destination);
+
+                state.scriptProcessor.onaudioprocess = (event) => {
+                    const inputBuffer = event.inputBuffer;
+                    const inputData = inputBuffer.getChannelData(0);
+                    const pcmData = float32ToInt16PCM(inputData);
+
+                    // 第一軌：即時傳送
+                    sendAudioChunk(new Uint8Array(pcmData.buffer));
+
+                    // 第二軌：累積到緩衝區
+                    state.pcmChunkBuffer.push(pcmData);
+                };
+
+                log(`AudioContext 取樣率：${state.audioContext.sampleRate}Hz`, 'info');
+                document.getElementById('track1Status').className = 'status-indicator active';
+                document.getElementById('track2Status').className = 'status-indicator active';
+
+            } catch (error) {
+                log(`音訊初始化失敗：${error.message}`, 'error');
+                throw error;
+            }
         }
 
-        const data = await response.json();
-        const resultText = data.candidates?.[0]?.content?.parts?.[0]?.text || '無有效語音。';
-        card.innerHTML = `<div style="font-size:11px;color:#4da3ff;">[${timeTag}] ${durationSec}s 切片精翻完成 (${selectedModel})</div><div>${resultText}</div>`;
-      } catch (err) {
-        card.innerHTML = `<div style="color:#ff6b6b;">[${timeTag}] 切片失敗 (${selectedModel}): ${err.message}</div>`;
-      }
-    }
+        // ==================== 螢幕喚醒鎖 ====================
+        async function requestWakeLock() {
+            if ('wakeLock' in navigator) {
+                try {
+                    state.wakeLock = await navigator.wakeLock.request('screen');
+                    log('螢幕喚醒鎖已啟用', 'info');
+                    
+                    state.wakeLock.addEventListener('release', () => {
+                        log('螢幕喚醒鎖已釋放', 'warning');
+                    });
+                } catch (error) {
+                    log(`喚醒鎖請求失敗：${error.message}`, 'warning');
+                }
+            }
+        }
 
-    async function stopProcessing(apiKey) {
-      clearInterval(countdownInterval);
-      isSetupComplete = false;
-      if (liveSocket) liveSocket.close();
-      if (scriptProcessor) scriptProcessor.disconnect();
-      if (gainNode) gainNode.disconnect();
-      if (audioContext) audioContext.close();
-      if (micStream) micStream.getTracks().forEach(track => track.stop());
-      
-      liveStatus.textContent = '第一軌：待機';
-      chunkTimer.textContent = `第二軌切片倒數：${chunkDuration}s`;
+        async function releaseWakeLock() {
+            if (state.wakeLock) {
+                await state.wakeLock.release();
+                state.wakeLock = null;
+            }
+        }
 
-      // 補傳最後一段音訊（若大於 0.5 秒）
-      if (pcmChunkBuffer.length > 2) {
-        const totalSamples = pcmChunkBuffer.reduce((acc, c) => acc + c.length, 0);
-        const leftoverSec = Math.max(1, Math.round(totalSamples / 16000));
-        log(`正在上傳最後殘留的 ${leftoverSec} 秒音訊...`);
-        await sendAudioChunkToDeepAPI(apiKey, leftoverSec);
-      } else {
-        pcmChunkBuffer = [];
-      }
-      log('收音已完全停止。');
-    }
+        // ==================== 匯出功能 ====================
+        function exportTranscripts() {
+            const targetLang = languageMap[state.targetLanguage];
+            let content = `# Gemini 雙軌即時同傳記錄\n\n`;
+            content += `**目標語言：** ${targetLang}\n`;
+            content += `**匯出時間：** ${new Date().toLocaleString('zh-TW')}\n\n`;
 
-    btnExport.addEventListener('click', () => {
-      const liveText = liveOutput.textContent.trim();
-      const cards = Array.from(deepOutput.querySelectorAll('.chunk-card'));
-      cards.reverse();
-      const deepText = cards.map(c => c.innerText.trim()).join('\n\n---\n\n');
+            // 第一軌記錄
+            content += `## 第一軌：即時同傳\n\n`;
+            if (state.track1Transcripts.length === 0) {
+                content += `*(無記錄)*\n\n`;
+            } else {
+                for (const item of state.track1Transcripts) {
+                    content += `**[${item.timestamp}]** ${item.text}\n\n`;
+                }
+            }
 
-      if (!liveText && !deepText) {
-        return alert('目前尚無任何翻譯內容可供匯出！');
-      }
+            // 第二軌記錄
+            content += `## 第二軌：時間軸精翻卡片\n\n`;
+            if (state.track2Transcripts.length === 0) {
+                content += `*(無記錄)*\n\n`;
+            } else {
+                for (const item of state.track2Transcripts) {
+                    content += `**[${item.timestamp}]**\n\n`;
+                    content += `${item.transcript}\n\n`;
+                    if (item.summary && item.summary.length > 0) {
+                        content += `**重點摘要：**\n`;
+                        for (const point of item.summary) {
+                            content += `- ${point}\n`;
+                        }
+                        content += `\n`;
+                    }
+                }
+            }
 
-      const now = new Date();
-      const exportContent = `# Gemini 雙軌同傳與精翻記錄
-- 匯出時間：${now.toLocaleString()}
-- 目標語言：${targetLangSelect.value}
-- 第二層模型：${modelSelect.value}
+            // 建立下載
+            const blob = new Blob([content], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `gemini-transcript-${Date.now()}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
 
-==================================================
-【第一層：即時同傳記錄 (Live)】
-==================================================
-${liveText || '(無內容)'}
+            log('記錄已匯出為 Markdown 檔案', 'info');
+        }
 
-==================================================
-【第二層：硬切精翻與摘要記錄 (Deep)】
-==================================================
-${deepText || '(無內容)'}
-`;
+        // ==================== 啟動/停止控制 ====================
+        async function startRecording() {
+            const apiKey = document.getElementById('apiKey').value.trim();
+            if (!apiKey) {
+                alert('請先輸入 API Key');
+                return;
+            }
 
-      const blob = new Blob([exportContent], { type: 'text/markdown;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const timeTag = now.toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      a.href = url;
-      a.download = `Gemini_Translation_${timeTag}.md`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      log('記錄已成功匯出！');
-    });
+            try {
+                log('開始啟動收音...', 'info');
+                
+                // 啟動音訊捕捉
+                await startAudioCapture();
+                
+                // 啟動第一軌 WebSocket
+                await startTrack1();
+                
+                // 啟動第二軌計時器
+                startChunkTimer();
+                
+                // 請求喚醒鎖
+                await requestWakeLock();
 
-    function int16ToBase64(int16Array) {
-      let binary = '';
-      const bytes = new Uint8Array(int16Array.buffer);
-      const len = bytes.byteLength;
-      for (let i = 0; i < len; i++) binary += String.fromCharCode(bytes[i]);
-      return window.btoa(binary);
-    }
+                state.isRecording = true;
+                
+                // 更新 UI
+                document.getElementById('btnStart').disabled = true;
+                document.getElementById('btnStop').disabled = false;
+                document.getElementById('btnExport').disabled = false;
 
-    function blobToBase64(blob) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-      });
-    }
+                log('收音已啟動', 'info');
 
-    function encodeWAV(samples, sampleRate) {
-      const buffer = new ArrayBuffer(44 + samples.length * 2);
-      const view = new DataView(buffer);
-      const writeString = (v, o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-      writeString(view, 0, 'RIFF');
-      view.setUint32(4, 36 + samples.length * 2, true);
-      writeString(view, 8, 'WAVE');
-      writeString(view, 12, 'fmt ');
-      view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true);
-      view.setUint16(22, 1, true);
-      view.setUint32(24, sampleRate, true);
-      view.setUint28(28, sampleRate * 2, true);
-      view.setUint16(32, 2, true);
-      view.setUint16(34, 16, true);
-      writeString(view, 36, 'data');
-      view.setUint32(40, samples.length * 2, true);
-      let offset = 44;
-      for (let i = 0; i < samples.length; i++, offset += 2) {
-        view.setInt16(offset, samples[i], true);
-      }
-      return new Blob([view], { type: 'audio/wav' });
-    }
-  </script>
+            } catch (error) {
+                log(`啟動失敗：${error.message}`, 'error');
+                alert(`啟動失敗：${error.message}\n\n請確認：\n1. 已授予麥克風權限\n2. 使用 HTTPS 或 localhost\n3. API Key 正確`);
+            }
+        }
+
+        async function stopRecording() {
+            log('停止收音...', 'info');
+
+            // 沖刷殘留音訊
+            if (state.pcmChunkBuffer.length > 0) {
+                const totalLength = state.pcmChunkBuffer.reduce((acc, chunk) => acc + chunk.length, 0);
+                const duration = totalLength / 16000; // 秒
+                if (duration > 0.5) {
+                    log(`沖刷殘留音訊：${duration.toFixed(2)}秒`, 'info');
+                    await processChunk();
+                }
+            }
+
+            // 停止計時器
+            stopChunkTimer();
+
+            // 關閉 WebSocket
+            if (state.webSocket) {
+                state.webSocket.close();
+                state.webSocket = null;
+            }
+
+            // 停止音訊流
+            if (state.scriptProcessor) {
+                state.scriptProcessor.disconnect();
+                state.scriptProcessor = null;
+            }
+
+            if (state.mediaStream) {
+                state.mediaStream.getTracks().forEach(track => track.stop());
+                state.mediaStream = null;
+            }
+
+            if (state.audioContext) {
+                state.audioContext.close();
+                state.audioContext = null;
+            }
+
+            // 釋放喚醒鎖
+            await releaseWakeLock();
+
+            state.isRecording = false;
+            state.isSetupComplete = false;
+            state.pcmChunkBuffer = [];
+
+            // 更新 UI
+            document.getElementById('btnStart').disabled = false;
+            document.getElementById('btnStop').disabled = true;
+            document.getElementById('track1Status').className = 'status-indicator';
+            document.getElementById('track2Status').className = 'status-indicator';
+
+            log('收音已停止', 'info');
+        }
+
+        // ==================== 事件監聽 ====================
+        document.getElementById('btnStart').addEventListener('click', startRecording);
+        document.getElementById('btnStop').addEventListener('click', stopRecording);
+        document.getElementById('btnExport').addEventListener('click', exportTranscripts);
+
+        // 字級調整
+        document.getElementById('fontSize').addEventListener('input', (e) => {
+            const value = e.target.value;
+            document.getElementById('fontSizeValue').textContent = value;
+            document.documentElement.style.setProperty('--content-font-size', `${value}px`);
+        });
+
+        // 版面比例調整
+        document.getElementById('layoutRatio').addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            const track1Pct = value;
+            const track2Pct = 100 - value;
+            document.documentElement.style.setProperty('--track1-height', `${track1Pct}%`);
+            document.documentElement.style.setProperty('--track2-height', `${track2Pct}%`);
+        });
+
+        // 目標語言變更
+        document.getElementById('targetLanguage').addEventListener('change', (e) => {
+            state.targetLanguage = e.target.value;
+            log(`目標語言已變更為：${languageMap[state.targetLanguage]}`, 'info');
+        });
+
+        // 切片週期變更
+        document.getElementById('chunkDuration').addEventListener('change', (e) => {
+            const value = parseInt(e.target.value);
+            state.chunkDuration = value * 1000;
+            document.getElementById('chunkDurationDisplay').textContent = value;
+            log(`切片週期已變更為：${value}秒`, 'info');
+            
+            // 如果正在錄音，重新啟動計時器
+            if (state.isRecording) {
+                stopChunkTimer();
+                startChunkTimer();
+            }
+        });
+
+        // 模型變更日誌
+        document.getElementById('track1Model').addEventListener('change', (e) => {
+            log(`第一軌模型已變更為：${e.target.value}`, 'info');
+        });
+
+        document.getElementById('track2Model').addEventListener('change', (e) => {
+            log(`第二軌模型已變更為：${e.target.value}`, 'info');
+        });
+
+        // 頁面卸載時清理
+        window.addEventListener('beforeunload', async () => {
+            if (state.isRecording) {
+                await stopRecording();
+            }
+            await releaseWakeLock();
+        });
+
+        log('系統初始化完成', 'info');
+        log('請輸入 API Key 後點擊「啟動收音」', 'info');
+    </script>
 </body>
 </html>
