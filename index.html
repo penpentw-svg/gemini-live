@@ -113,7 +113,7 @@
             cursor: pointer;
         }
 
-        /* 控制按鈕區 - 移出設定選單 */
+        /* 控制按鈕區 - 橫列排版 */
         .controls {
             display: flex;
             gap: 12px;
@@ -144,6 +144,7 @@
             display: flex;
             align-items: center;
             gap: 6px;
+            white-space: nowrap;
         }
 
         button:disabled {
@@ -176,6 +177,15 @@
 
         .btn-export:hover:not(:disabled) {
             background: #3367d6;
+        }
+
+        .btn-copy {
+            background: #5f6368;
+            color: white;
+        }
+
+        .btn-copy:hover:not(:disabled) {
+            background: #484c50;
         }
 
         /* 雙軌顯示區 */
@@ -294,10 +304,12 @@
             overflow-y: auto;
             border-top: 1px solid var(--border-color);
             flex-shrink: 0;
+            position: relative;
         }
 
         .debug-log {
             margin: 2px 0;
+            word-break: break-all;
         }
 
         .debug-log.error {
@@ -366,11 +378,13 @@
             }
 
             .controls, .main-controls {
-                flex-direction: column;
+                flex-direction: row;
+                flex-wrap: wrap;
             }
 
             button {
-                width: 100%;
+                flex: 1;
+                min-width: 120px;
                 justify-content: center;
             }
 
@@ -476,14 +490,14 @@
 
     <!-- 主要控制按鈕區 (在設定選單外) -->
     <div class="main-controls">
-        <button class="btn-start" id="btnStart">
-            <span>🎤</span> 啟動收音
-        </button>
-        <button class="btn-stop" id="btnStop" disabled>
-            <span>⏹️</span> 停止收音
+        <button class="btn-start" id="btnToggle">
+            <span>🎤</span> <span id="btnToggleText">啟動收音</span>
         </button>
         <button class="btn-export" id="btnExport">
             <span>📥</span> 匯出記錄
+        </button>
+        <button class="btn-copy" id="btnCopyLog">
+            <span>📋</span> 複製日誌
         </button>
     </div>
 
@@ -533,7 +547,7 @@
 
     <!-- 頁尾 -->
     <footer>
-        <span class="version-badge">v1.9.0 (2026.09.02-r6)</span>
+        <span class="version-badge">v2.0.0 (2026.09.02-r7)</span>
     </footer>
 
     <script>
@@ -726,6 +740,33 @@
             return new Blob([wavBuffer], { type: 'audio/wav' });
         }
 
+        // ==================== 複製日誌功能 ====================
+        async function copyLog() {
+            const debugPanel = document.getElementById('debugPanel');
+            const logText = debugPanel.innerText;
+
+            try {
+                // 嘗試使用 Clipboard API
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    await navigator.clipboard.writeText(logText);
+                    log('✅ 日誌已複製到剪貼簿', 'success');
+                } else {
+                    // 備援方案：建立臨時 textarea
+                    const textarea = document.createElement('textarea');
+                    textarea.value = logText;
+                    textarea.style.position = 'fixed';
+                    textarea.style.opacity = '0';
+                    document.body.appendChild(textarea);
+                    textarea.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(textarea);
+                    log('✅ 日誌已複製到剪貼簿', 'success');
+                }
+            } catch (error) {
+                log(`❌ 複製失敗：${error.message}`, 'error');
+            }
+        }
+
         // ==================== 第一軌：WebSocket 即時同傳 (修正模型 ID 和 API 版本) ====================
         async function startTrack1() {
             const apiKey = document.getElementById('apiKey').value.trim();
@@ -770,50 +811,34 @@
 
                     state.webSocket.onmessage = (event) => {
                         try {
-                            const response = JSON.parse(event.data);
-                            log(`收到伺服器回應：${JSON.stringify(response).substring(0, 200)}...`, 'info');
-                            
-                            // 檢查 setupComplete
-                            if (response.setupComplete === true) {
-                                state.isSetupComplete = true;
-                                state.isWaitingForSetupResponse = false;
-                                log('✅ WebSocket 協商完成 (setupComplete=true)，開始傳送音訊', 'success');
-                                document.getElementById('track1Status').className = 'status-indicator active';
-                                
-                                // 發送佇列中的音訊
-                                flushAudioQueue();
-                                resolve(true);
+                            // 檢查 event.data 類型
+                            let dataStr;
+                            if (typeof event.data === 'string') {
+                                dataStr = event.data;
+                            } else if (event.data instanceof Blob) {
+                                // Blob 轉字串（備援）
+                                const reader = new FileReader();
+                                reader.onload = () => {
+                                    handleWebSocketMessage(reader.result, resolve, reject);
+                                };
+                                reader.onerror = () => {
+                                    log('Blob 讀取失敗', 'error');
+                                };
+                                reader.readAsText(event.data);
+                                return;
+                            } else if (event.data instanceof ArrayBuffer) {
+                                // ArrayBuffer 轉字串（備援）
+                                const decoder = new TextDecoder('utf-8');
+                                dataStr = decoder.decode(event.data);
+                            } else {
+                                log(`未知的 WebSocket 數據類型：${typeof event.data}`, 'warning');
                                 return;
                             }
 
-                            // 某些模型可能直接回傳 serverContent
-                            if (response.serverContent) {
-                                if (!state.isSetupComplete) {
-                                    state.isSetupComplete = true;
-                                    state.isWaitingForSetupResponse = false;
-                                    log('✅ 收到 serverContent，視為 setup 完成', 'success');
-                                    document.getElementById('track1Status').className = 'status-indicator active';
-                                    flushAudioQueue();
-                                }
-
-                                // 處理轉錄結果
-                                processTranscriptResponse(response);
-                            }
-
-                            // 處理 transcript 回應
-                            if (response.transcript && response.transcript.results) {
-                                if (!state.isSetupComplete) {
-                                    state.isSetupComplete = true;
-                                    state.isWaitingForSetupResponse = false;
-                                    log('✅ 收到 transcript，視為 setup 完成', 'success');
-                                    document.getElementById('track1Status').className = 'status-indicator active';
-                                    flushAudioQueue();
-                                }
-                                processTranscriptResponse(response);
-                            }
+                            handleWebSocketMessage(dataStr, resolve, reject);
 
                         } catch (e) {
-                            log(`WebSocket 訊息解析錯誤：${e.message}`, 'error');
+                            log(`WebSocket 訊息處理錯誤：${e.message}`, 'error');
                         }
                     };
 
@@ -880,6 +905,58 @@
             } catch (error) {
                 log(`WebSocket 連線失敗：${error.message}`, 'error');
                 throw error;
+            }
+        }
+
+        function handleWebSocketMessage(dataStr, resolve, reject) {
+            let response;
+            try {
+                response = JSON.parse(dataStr);
+            } catch (e) {
+                log(`JSON 解析失敗：${e.message}`, 'error');
+                log(`原始數據：${dataStr.substring(0, 300)}...`, 'error');
+                return;
+            }
+
+            log(`收到伺服器回應：${JSON.stringify(response).substring(0, 200)}...`, 'info');
+            
+            // 檢查 setupComplete
+            if (response.setupComplete === true) {
+                state.isSetupComplete = true;
+                state.isWaitingForSetupResponse = false;
+                log('✅ WebSocket 協商完成 (setupComplete=true)，開始傳送音訊', 'success');
+                document.getElementById('track1Status').className = 'status-indicator active';
+                
+                // 發送佇列中的音訊
+                flushAudioQueue();
+                if (resolve) resolve(true);
+                return;
+            }
+
+            // 某些模型可能直接回傳 serverContent
+            if (response.serverContent) {
+                if (!state.isSetupComplete) {
+                    state.isSetupComplete = true;
+                    state.isWaitingForSetupResponse = false;
+                    log('✅ 收到 serverContent，視為 setup 完成', 'success');
+                    document.getElementById('track1Status').className = 'status-indicator active';
+                    flushAudioQueue();
+                }
+
+                // 處理轉錄結果
+                processTranscriptResponse(response);
+            }
+
+            // 處理 transcript 回應
+            if (response.transcript && response.transcript.results) {
+                if (!state.isSetupComplete) {
+                    state.isSetupComplete = true;
+                    state.isWaitingForSetupResponse = false;
+                    log('✅ 收到 transcript，視為 setup 完成', 'success');
+                    document.getElementById('track1Status').className = 'status-indicator active';
+                    flushAudioQueue();
+                }
+                processTranscriptResponse(response);
             }
         }
 
@@ -1307,7 +1384,15 @@
             log('記錄已匯出為 Markdown 檔案', 'info');
         }
 
-        // ==================== 啟動/停止控制 ====================
+        // ==================== 啟動/停止控制 (合併為同一按鈕) ====================
+        async function toggleRecording() {
+            if (state.isRecording) {
+                await stopRecording();
+            } else {
+                await startRecording();
+            }
+        }
+
         async function startRecording() {
             const apiKey = document.getElementById('apiKey').value.trim();
             if (!apiKey) {
@@ -1336,8 +1421,7 @@
                 state.isRecording = true;
                 
                 // 更新 UI
-                document.getElementById('btnStart').disabled = true;
-                document.getElementById('btnStop').disabled = false;
+                updateToggleButton(true);
                 document.getElementById('btnExport').disabled = false;
                 document.getElementById('btnExportSettings').disabled = false;
 
@@ -1407,8 +1491,7 @@
             state.audioQueue = [];
 
             // 更新 UI
-            document.getElementById('btnStart').disabled = false;
-            document.getElementById('btnStop').disabled = true;
+            updateToggleButton(false);
             document.getElementById('btnExport').disabled = true;
             document.getElementById('btnExportSettings').disabled = true;
             document.getElementById('track1Status').className = 'status-indicator';
@@ -1417,11 +1500,24 @@
             log('收音已停止', 'info');
         }
 
+        function updateToggleButton(isRecording) {
+            const btn = document.getElementById('btnToggle');
+            const text = document.getElementById('btnToggleText');
+            
+            if (isRecording) {
+                btn.className = 'btn-stop';
+                btn.innerHTML = '<span>⏹️</span> <span id="btnToggleText">停止收音</span>';
+            } else {
+                btn.className = 'btn-start';
+                btn.innerHTML = '<span>🎤</span> <span id="btnToggleText">啟動收音</span>';
+            }
+        }
+
         // ==================== 事件監聽 ====================
-        document.getElementById('btnStart').addEventListener('click', startRecording);
-        document.getElementById('btnStop').addEventListener('click', stopRecording);
+        document.getElementById('btnToggle').addEventListener('click', toggleRecording);
         document.getElementById('btnExport').addEventListener('click', exportTranscripts);
         document.getElementById('btnExportSettings').addEventListener('click', exportTranscripts);
+        document.getElementById('btnCopyLog').addEventListener('click', copyLog);
 
         // 字級調整
         document.getElementById('fontSize').addEventListener('input', (e) => {
@@ -1486,7 +1582,7 @@
         // ==================== 初始化 ====================
         window.addEventListener('DOMContentLoaded', () => {
             loadSettings();
-            log('系統初始化完成', 'info');
+            log('系統就緒', 'info');
             log('設定已從 LocalStorage 載入 (如有)', 'info');
             log('請確認 API Key 後點擊「啟動收音」', 'info');
         });
