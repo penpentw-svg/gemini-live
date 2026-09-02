@@ -117,7 +117,7 @@
       display: flex;
       flex-direction: column;
       min-height: 0;
-      transition: flex 0.15s ease;
+      transition: flex 0.1s ease;
     }
     #panelLive { flex: 50; }
     #panelDeep { flex: 50; }
@@ -181,14 +181,14 @@
           <label for="modelSelect">第二層精翻模型：</label>
           <select id="modelSelect">
             <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash (推薦)</option>
-            <option value="gemini-2.5-pro">Gemini 2.5 Pro (深度分析)</option>
+            <option value="gemini-2.5-pro">Gemini 2.5 Pro (深層解析)</option>
             <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
             <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
             <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
           </select>
         </div>
 
-        <!-- 切片時間 -->
+        <!-- 切片時間（預設 10 秒） -->
         <div class="config-group">
           <label for="chunkDurationSelect">第二層切片頻率：</label>
           <select id="chunkDurationSelect">
@@ -199,16 +199,16 @@
           </select>
         </div>
 
-        <!-- 字級大小滑桿 -->
+        <!-- 字級大小 -->
         <div class="config-group">
           <label>字級大小：</label>
           <div class="range-group">
-            <input type="range" id="fontSizeRange" min="12" max="24" value="15" />
+            <input type="range" id="fontSizeRange" min="12" max="26" value="15" />
             <span class="range-val" id="fontSizeVal">15px</span>
           </div>
         </div>
 
-        <!-- 視窗高度比例滑桿 -->
+        <!-- 視窗高度比例 -->
         <div class="config-group full-width">
           <label>兩層高度比例 (第1層 / 第2層)：</label>
           <div class="range-group">
@@ -220,7 +220,7 @@
         <!-- API KEY -->
         <div class="config-group full-width">
           <label for="apiKey">Gemini API Key：</label>
-          <input type="password" id="apiKey" placeholder="若程式內未寫死，請貼上 Key" />
+          <input type="password" id="apiKey" placeholder="若程式內未寫死，請在此貼上 Key" />
         </div>
       </div>
     </details>
@@ -240,7 +240,7 @@
         <span>第一層：即時同傳 (原文 + 括號翻譯)</span>
         <span class="tag tag-live">Live WS</span>
       </div>
-      <div class="content-box" id="liveOutput">等待語音輸入...（說完一句稍微停頓 1 秒即可送出）</div>
+      <div class="content-box" id="liveOutput">等待語音輸入...（說完一句話稍微停頓約 1 秒即可送出）</div>
     </div>
 
     <!-- 第二軌 -->
@@ -254,12 +254,13 @@
   </div>
 
   <script>
-    // ==========================================
-    // 在此處可直接寫死你的 API Key（免重複輸入）
-    // ==========================================
+    // ========================================================
+    // 若要固定 Key 免重複輸入，可直接在此填入（GitHub 請確保設為 Private 倉庫）
+    // ========================================================
     const HARDCODED_API_KEY = ""; 
 
     let isRunning = false;
+    let isSetupComplete = false; // 關鍵：握手狀態鎖定開關
     let audioContext = null;
     let micStream = null;
     let scriptProcessor = null;
@@ -294,19 +295,18 @@
       console.log(msg);
     }
 
-    // 1. 初始化讀取 Key
     if (HARDCODED_API_KEY) apiKeyInput.value = HARDCODED_API_KEY;
     else if (localStorage.getItem('gemini_key')) apiKeyInput.value = localStorage.getItem('gemini_key');
     apiKeyInput.addEventListener('change', () => localStorage.setItem('gemini_key', apiKeyInput.value.trim()));
 
-    // 2. 字級大小動態調整
+    // 字級大小調整
     fontSizeRange.addEventListener('input', (e) => {
       const size = e.target.value;
       fontSizeVal.textContent = `${size}px`;
       document.documentElement.style.setProperty('--content-font-size', `${size}px`);
     });
 
-    // 3. 視窗高度比例動態調整
+    // 視窗比例調整
     ratioRange.addEventListener('input', (e) => {
       const liveRatio = parseInt(e.target.value, 10);
       const deepRatio = 100 - liveRatio;
@@ -315,12 +315,12 @@
       ratioVal.textContent = `${Math.round(liveRatio/10)}:${Math.round(deepRatio/10)}`;
     });
 
-    // 4. 第二層模型切換標籤更新
+    // 模型標籤更新
     modelSelect.addEventListener('change', () => {
       deepModelTag.textContent = modelSelect.value;
     });
 
-    // 5. 切片頻率切換
+    // 切片時間切換
     chunkDurationSelect.addEventListener('change', () => {
       chunkDuration = parseInt(chunkDurationSelect.value, 10);
       timeLeft = chunkDuration;
@@ -355,6 +355,7 @@
       liveOutput.textContent = '';
       deepOutput.textContent = '';
       pcmChunkBuffer = [];
+      isSetupComplete = false;
       const targetLang = targetLangSelect.value;
 
       // 喚醒 iOS AudioContext
@@ -362,9 +363,9 @@
       if (audioContext.state === 'suspended') {
         await audioContext.resume();
       }
-      log(`AudioContext 取樣率: ${audioContext.sampleRate}`);
+      log(`AudioContext 已喚醒 (16kHz)`);
 
-      // 關閉系統降噪以收遠場聲音與廣播
+      // 關閉系統降噪以收錄環境音與廣播
       micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: false,
@@ -378,7 +379,7 @@
       // 啟動第一軌 WebSocket
       initGeminiLiveWebSocket(apiKey, targetLang);
 
-      // Web Audio 分流
+      // Web Audio 分流管線
       const source = audioContext.createMediaStreamSource(micStream);
       scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
       source.connect(scriptProcessor);
@@ -394,8 +395,8 @@
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
 
-        // 分支 1：即時串流給 WebSocket
-        if (liveSocket && liveSocket.readyState === WebSocket.OPEN) {
+        // 核心修復：只有在握手完成 (isSetupComplete = true) 後才允許發送音訊封包
+        if (liveSocket && liveSocket.readyState === WebSocket.OPEN && isSetupComplete) {
           const base64Audio = int16ToBase64(pcm16);
           liveSocket.send(JSON.stringify({
             realtimeInput: {
@@ -404,7 +405,7 @@
           }));
         }
 
-        // 分支 2：硬切緩衝池
+        // 第二軌緩衝池持續累積
         pcmChunkBuffer.push(pcm16);
       };
 
@@ -414,20 +415,23 @@
     // 第一軌：WebSocket 即時同傳（格式：原文 (翻譯)）
     function initGeminiLiveWebSocket(apiKey, targetLang) {
       log('第一軌連線中...');
+      isSetupComplete = false;
       const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
       liveSocket = new WebSocket(wsUrl);
 
       liveSocket.onopen = () => {
-        log('第一軌連線成功，正在發送握手協定...');
-        liveStatus.textContent = '第一軌：即時同傳中';
+        log('第一軌連線成功，發送握手 Setup...');
+        liveStatus.textContent = '第一軌：協商中...';
         
         liveSocket.send(JSON.stringify({
           setup: {
             model: "models/gemini-2.0-flash-exp",
-            generationConfig: { responseModalities: ["TEXT"] },
+            generationConfig: { 
+              responseModalities: ["TEXT"] 
+            },
             systemInstruction: {
               parts: [{ 
-                text: `你是同傳口譯。請將聽到的每一句原文先完整寫出，緊接著在半形括號內附上${targetLang}翻譯。格式嚴格為：「原文 (翻譯後的${targetLang})」。不要添加額外的寒暄或解釋。` 
+                text: `你是專業同傳口譯。請將聽到的每一句原文先完整寫出，緊接著在半形括號內附上${targetLang}翻譯。格式嚴格為：「原文 (翻譯後的${targetLang})」。不要輸出任何多餘寒暄、解釋或標註。` 
               }]
             }
           }
@@ -440,11 +444,15 @@
           if (rawData instanceof Blob) rawData = await rawData.text();
           const res = JSON.parse(rawData);
 
+          // 握手確認
           if (res.setupComplete) {
-            log('第一軌握手完成！音訊傳輸中。');
+            isSetupComplete = true;
+            log('第一軌握手完成 (setupComplete)！音訊開始串流。');
+            liveStatus.textContent = '第一軌：即時同傳中';
             return;
           }
 
+          // 取得回傳文字
           const parts = res.serverContent?.modelTurn?.parts;
           if (parts && parts.length > 0) {
             for (let part of parts) {
@@ -459,10 +467,11 @@
         }
       };
 
-      liveSocket.onerror = () => { log('第一軌連線錯誤'); };
+      liveSocket.onerror = () => { log('第一軌連線發生錯誤'); };
       liveSocket.onclose = (e) => {
-        log(`第一軌關閉 (${e.code})`);
-        liveStatus.textContent = '第一軌：已斷開';
+        isSetupComplete = false;
+        log(`第一軌關閉 (代碼: ${e.code}, 原因: ${e.reason || '無'})`);
+        liveStatus.textContent = '第一軌：已中斷';
       };
     }
 
@@ -529,6 +538,7 @@
 
     function stopProcessing() {
       clearInterval(countdownInterval);
+      isSetupComplete = false;
       if (liveSocket) liveSocket.close();
       if (scriptProcessor) scriptProcessor.disconnect();
       if (audioContext) audioContext.close();
