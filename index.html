@@ -100,9 +100,7 @@
       color: #fff;
       border: 1px solid var(--border);
     }
-    #btn-export:active {
-      opacity: 0.8;
-    }
+    #btn-export:active { opacity: 0.8; }
 
     .status-bar {
       font-size: 11px;
@@ -125,7 +123,6 @@
       overflow-y: auto;
     }
 
-    /* 雙軌容器 - 動態比例調整 */
     .grid-container {
       display: flex;
       flex-direction: column;
@@ -182,7 +179,6 @@
       border-radius: 4px;
     }
 
-    /* 頁尾版本標記 */
     footer {
       flex-shrink: 0;
       display: flex;
@@ -192,7 +188,6 @@
       font-size: 11px;
       color: var(--text-sub);
       opacity: 0.85;
-      letter-spacing: 0.5px;
     }
     .ver-badge {
       background: #1e2025;
@@ -224,9 +219,8 @@
         <div class="config-group">
           <label for="liveModelSelect">第一層 Live 模型：</label>
           <select id="liveModelSelect">
-            <option value="models/gemini-2.0-flash" selected>Gemini 3.5 Live Translate (預設)</option>
-            <option value="models/gemini-2.5-flash">Gemini 3.5 Live (2.5-Flash 核心)</option>
-            <option value="models/gemini-2.0-flash-realtime-exp">Gemini 2.0 Realtime Exp</option>
+            <option value="models/gemini-2.0-flash-realtime-exp" selected>Gemini 3.5 Live (Realtime 核心)</option>
+            <option value="models/gemini-2.0-flash">Gemini 2.0 Flash</option>
           </select>
         </div>
 
@@ -234,13 +228,13 @@
         <div class="config-group">
           <label for="modelSelect">第二層精翻模型：</label>
           <select id="modelSelect">
-            <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash (預設推薦)</option>
+            <option value="gemini-2.0-flash" selected>Gemini 2.0 Flash (推薦，穩定極速)</option>
+            <option value="gemini-1.5-flash">Gemini 1.5 Flash (經典穩定)</option>
+            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+            <option value="gemini-3.0-flash">Gemini 3.0 Flash</option>
             <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
             <option value="gemini-3.7-flash">Gemini 3.7 Flash</option>
-            <option value="gemini-3.0-flash">Gemini 3.0 Flash</option>
-            <option value="gemini-2.5-pro">Gemini 2.5 Pro (深度分析)</option>
-            <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
-            <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
           </select>
         </div>
 
@@ -276,7 +270,7 @@
         <!-- API KEY -->
         <div class="config-group full-width">
           <label for="apiKey">Gemini API Key：</label>
-          <input type="password" id="apiKey" placeholder="若程式內未寫死，請在此貼上 Key" />
+          <input type="password" id="apiKey" placeholder="若程式內未寫死，請貼上 Key" />
         </div>
       </div>
     </details>
@@ -290,11 +284,10 @@
       <span id="liveStatus">第一軌：待機</span>
       <span id="chunkTimer">第二軌切片倒數：10s</span>
     </div>
-    <div class="debug-log" id="debugLog">日誌：等待啟動...</div>
+    <div class="debug-log" id="debugLog">日誌：系統就緒，請點擊啟動...</div>
   </header>
 
   <div class="grid-container">
-    <!-- 第一軌 -->
     <div class="panel" id="panelLive">
       <div class="panel-header">
         <span>第一層：即時同傳 (原文 + 括號翻譯)</span>
@@ -303,25 +296,21 @@
       <div class="content-box" id="liveOutput">等待語音輸入...（說完一句話稍微停頓約 1 秒即可送出）</div>
     </div>
 
-    <!-- 第二軌 -->
     <div class="panel" id="panelDeep">
       <div class="panel-header">
         <span id="deepPanelTitle">第二層：10 秒硬切精翻</span>
-        <span class="tag tag-deep" id="deepModelTag">Gemini 2.5 Flash</span>
+        <span class="tag tag-deep" id="deepModelTag">Gemini 2.0 Flash</span>
       </div>
       <div class="content-box" id="deepOutput">等待硬切音訊處理...</div>
     </div>
   </div>
 
-  <!-- 頁尾版本標記 -->
   <footer>
-    <span class="ver-badge" id="appVersion">v1.6.0 (2026.09.02-r3)</span>
+    <span class="ver-badge" id="appVersion">v2.0.0 (2026.09.02-stable-rebuild)</span>
   </footer>
 
   <script>
-    // ========================================================
     // 若要固定 Key 免重複輸入，可直接在此填入（GitHub 倉庫請設為 Private）
-    // ========================================================
     const HARDCODED_API_KEY = ""; 
 
     let isRunning = false;
@@ -329,6 +318,7 @@
     let audioContext = null;
     let micStream = null;
     let scriptProcessor = null;
+    let gainNode = null;
     let liveSocket = null;
     let pcmChunkBuffer = [];
     let countdownInterval = null;
@@ -367,14 +357,12 @@
     else if (localStorage.getItem('gemini_key')) apiKeyInput.value = localStorage.getItem('gemini_key');
     apiKeyInput.addEventListener('change', () => localStorage.setItem('gemini_key', apiKeyInput.value.trim()));
 
-    // 字級調整
     fontSizeRange.addEventListener('input', (e) => {
       const size = e.target.value;
       fontSizeVal.textContent = `${size}px`;
       document.documentElement.style.setProperty('--content-font-size', `${size}px`);
     });
 
-    // 視窗比例
     ratioRange.addEventListener('input', (e) => {
       const liveRatio = parseInt(e.target.value, 10);
       const deepRatio = 100 - liveRatio;
@@ -383,11 +371,9 @@
       ratioVal.textContent = `${Math.round(liveRatio/10)}:${Math.round(deepRatio/10)}`;
     });
 
-    // 標籤更新
     modelSelect.addEventListener('change', () => { deepModelTag.textContent = modelSelect.value; });
     liveModelSelect.addEventListener('change', () => { liveModelTag.textContent = liveModelSelect.value.replace('models/', ''); });
 
-    // 切片時間切換
     chunkDurationSelect.addEventListener('change', () => {
       chunkDuration = parseInt(chunkDurationSelect.value, 10);
       timeLeft = chunkDuration;
@@ -395,7 +381,27 @@
       deepPanelTitle.textContent = `第二層：${chunkDuration} 秒硬切精翻`;
     });
 
-    // 主啟動 / 停止開關
+    // 軟體即時降採樣至 16kHz Int16
+    function downsampleTo16k(inputData, inputSampleRate) {
+      if (inputSampleRate === 16000) {
+        const pcm16 = new Int16Array(inputData.length);
+        for (let i = 0; i < inputData.length; i++) {
+          let s = Math.max(-1, Math.min(1, inputData[i]));
+          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+        return pcm16;
+      }
+      const ratio = inputSampleRate / 16000;
+      const newLength = Math.round(inputData.length / ratio);
+      const result = new Int16Array(newLength);
+      for (let i = 0; i < newLength; i++) {
+        const index = Math.round(i * ratio);
+        let s = Math.max(-1, Math.min(1, inputData[index] || 0));
+        result[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+      }
+      return result;
+    }
+
     btnToggle.addEventListener('click', async () => {
       const key = apiKeyInput.value.trim() || HARDCODED_API_KEY;
       if (!isRunning) {
@@ -415,7 +421,7 @@
         btnToggle.textContent = '啟動雙軌同傳系統';
         btnToggle.classList.remove('recording');
         isRunning = false;
-        await stopProcessing(key); // 停止時自動觸發殘留語音上傳
+        await stopProcessing(key);
       }
     });
 
@@ -429,41 +435,46 @@
       liveModelTag.textContent = liveModelName.replace('models/', '');
       deepModelTag.textContent = modelSelect.value;
 
-      // 1. 初始化音訊環境
-      audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      // 1. 標準喚醒 Web Audio (不指定 sampleRate，相容 iOS Safari 限制)
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      audioContext = new AudioContextClass();
       if (audioContext.state === 'suspended') {
         await audioContext.resume();
       }
-      log(`AudioContext 取樣率: ${audioContext.sampleRate}Hz`);
+      const hwSampleRate = audioContext.sampleRate;
+      log(`音訊硬體啟動: ${hwSampleRate}Hz (將自動重採樣至 16kHz)`);
 
-      // 2. 獲取麥克風（關閉降噪收環境與廣播音）
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-          channelCount: 1,
-          sampleRate: 16000
-        }
-      });
+      // 2. 獲取麥克風
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        });
+      } catch (e) {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      }
 
-      // 3. Web Audio 分流管線
+      // 3. 建立音訊分流管線與靜音防回授
       const source = audioContext.createMediaStreamSource(micStream);
       scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+      gainNode = audioContext.createGain();
+      gainNode.gain.value = 0; // 靜音，防止麥克風聲音從喇叭輸出造成嘯叫
+
       source.connect(scriptProcessor);
-      scriptProcessor.connect(audioContext.destination);
+      scriptProcessor.connect(gainNode);
+      gainNode.connect(audioContext.destination);
 
       scriptProcessor.onaudioprocess = (e) => {
         if (!isRunning) return;
         const inputData = e.inputBuffer.getChannelData(0);
 
-        const pcm16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          let s = Math.max(-1, Math.min(1, inputData[i]));
-          pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
+        // 轉換為標準 16kHz PCM Int16
+        const pcm16 = downsampleTo16k(inputData, hwSampleRate);
 
-        // 分支 1：即時串流給 WebSocket
+        // 第一軌：即時發送
         if (liveSocket && liveSocket.readyState === WebSocket.OPEN && isSetupComplete) {
           try {
             const base64Audio = int16ToBase64(pcm16);
@@ -472,17 +483,17 @@
                 mediaChunks: [{ mimeType: "audio/pcm;rate=16000", data: base64Audio }]
               }
             }));
-          } catch (e) {}
+          } catch (err) {}
         }
 
-        // 分支 2：第二軌持續累積音訊
+        // 第二軌：存入 16kHz 緩衝池
         pcmChunkBuffer.push(pcm16);
       };
 
-      // 4. 第二軌切片計時器立即啟動
+      // 4. 第二軌：硬切計時器立即啟動 (核心保障)
       startChunkTimer(apiKey);
 
-      // 5. 第一軌非同步啟動
+      // 5. 第一軌：獨立非同步啟動
       try {
         initGeminiLiveWebSocket(apiKey, targetLang, liveModelName);
       } catch (err) {
@@ -491,7 +502,6 @@
       }
     }
 
-    // 第一軌：WebSocket 即時同傳（格式：原文 (翻譯)）
     function initGeminiLiveWebSocket(apiKey, targetLang, liveModelName) {
       log(`正在建立第一軌連線 (${liveModelName})...`);
       isSetupComplete = false;
@@ -499,7 +509,7 @@
       liveSocket = new WebSocket(wsUrl);
 
       liveSocket.onopen = () => {
-        log(`第一軌連線建立，發送 Setup...`);
+        log(`第一軌 WebSocket 已連接，發送 Setup...`);
         liveStatus.textContent = '第一軌：協商中...';
         
         liveSocket.send(JSON.stringify({
@@ -525,7 +535,7 @@
 
           if (res.setupComplete) {
             isSetupComplete = true;
-            log('握手成功 (setupComplete)！第一軌即時同傳開始。');
+            log('第一軌握手完成 (setupComplete)！音訊傳輸中。');
             liveStatus.textContent = '第一軌：即時同傳中';
             return;
           }
@@ -547,7 +557,7 @@
       liveSocket.onerror = () => { log('第一軌連線異常'); };
       liveSocket.onclose = (e) => {
         isSetupComplete = false;
-        log(`第一軌已關閉 (代碼: ${e.code}) - 第二軌不受影響繼續運作`);
+        log(`第一軌已關閉 (${e.code} ${e.reason || ''}) - 第二軌不受影響繼續運行`);
         liveStatus.textContent = '第一軌：已停止（第二軌正常運行）';
       };
     }
@@ -564,7 +574,6 @@
       }, 1000);
     }
 
-    // 第二軌：自選模型硬切精翻（格式：原文 (翻譯)）
     async function sendAudioChunkToDeepAPI(apiKey, durationSec) {
       if (pcmChunkBuffer.length === 0) return;
 
@@ -581,6 +590,7 @@
         offset += c.length;
       }
 
+      // 已精確重採樣為 16kHz
       const wavBlob = encodeWAV(mergedPcm, 16000);
       const base64Wav = await blobToBase64(wavBlob);
 
@@ -619,35 +629,32 @@
       }
     }
 
-    // 停止處理流程：自動上傳殘留語音
     async function stopProcessing(apiKey) {
       clearInterval(countdownInterval);
       isSetupComplete = false;
       if (liveSocket) liveSocket.close();
       if (scriptProcessor) scriptProcessor.disconnect();
+      if (gainNode) gainNode.disconnect();
       if (audioContext) audioContext.close();
       if (micStream) micStream.getTracks().forEach(track => track.stop());
       
       liveStatus.textContent = '第一軌：待機';
       chunkTimer.textContent = `第二軌切片倒數：${chunkDuration}s`;
 
-      // 檢查是否有未滿週期的殘留語音（超過 0.5 秒即自動上傳）
+      // 補傳最後一段音訊（若大於 0.5 秒）
       if (pcmChunkBuffer.length > 2) {
         const totalSamples = pcmChunkBuffer.reduce((acc, c) => acc + c.length, 0);
         const leftoverSec = Math.max(1, Math.round(totalSamples / 16000));
-        log(`正在上傳並分析最後殘留的 ${leftoverSec} 秒音訊...`);
+        log(`正在上傳最後殘留的 ${leftoverSec} 秒音訊...`);
         await sendAudioChunkToDeepAPI(apiKey, leftoverSec);
       } else {
         pcmChunkBuffer = [];
       }
-      log('錄音已完全停止。');
+      log('收音已完全停止。');
     }
 
-    // 匯出完整翻譯結果為 Markdown 檔案
     btnExport.addEventListener('click', () => {
       const liveText = liveOutput.textContent.trim();
-      
-      // 提取第二層所有已完成的卡片內容（畫面為 prepend 倒序，匯出時翻轉為時間正序）
       const cards = Array.from(deepOutput.querySelectorAll('.chunk-card'));
       cards.reverse();
       const deepText = cards.map(c => c.innerText.trim()).join('\n\n---\n\n');
@@ -683,7 +690,7 @@ ${deepText || '(無內容)'}
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      log('翻譯結果已成功匯出！');
+      log('記錄已成功匯出！');
     });
 
     function int16ToBase64(int16Array) {
