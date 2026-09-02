@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Gemini 雙軌即時同傳 v3.1.0</title>
+<title>Gemini 雙軌即時同傳 v3.1.1</title>
 <style>
 :root{--bg:#0b1020;--panel:#121a2b;--panel2:#182235;--text:#eef2ff;--muted:#9aa7bd;--line:#2a3750;--accent:#60a5fa;--danger:#ef4444;--warn:#f59e0b;--ok:#34d399;--radius:14px}
 *{box-sizing:border-box}
@@ -262,6 +262,14 @@ function requireKey(){
     return false;
   }
   return true;
+}
+
+function eventToText(data){
+  if(typeof data==='string') return Promise.resolve(data);
+  if(data instanceof Blob) return data.text();
+  if(data instanceof ArrayBuffer) return Promise.resolve(new TextDecoder().decode(data));
+  if(ArrayBuffer.isView(data)) return Promise.resolve(new TextDecoder().decode(data.buffer));
+  return Promise.resolve('');
 }
 
 function arrayBufferToBase64(buffer){
@@ -794,7 +802,7 @@ document.addEventListener('visibilitychange',async()=>{
   }
 });
 
-loadSettings();bindSettings();log('v3.0.0 載入完成。');
+loadSettings();bindSettings();log('v3.1.0 載入完成。');
 })();
 </script>
 </body>
