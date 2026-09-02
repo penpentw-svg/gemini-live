@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Gemini 雙軌即時同傳 v3.1.13</title>
+<title>Gemini 雙軌即時同傳 v3.1.13.1</title>
 <style>
 :root{--bg:#0b1020;--panel:#121a2b;--panel2:#182235;--text:#eef2ff;--muted:#9aa7bd;--line:#2a3750;--accent:#60a5fa;--danger:#ef4444;--warn:#f59e0b;--ok:#34d399;--radius:14px}
 *{box-sizing:border-box}
@@ -152,7 +152,7 @@ h1{font-size:20px;margin:0}
 </div>
 
 <div class="footer">
-  v3.1.13：修復第一軌 WebSocket 缺失的 eventToText() 解析函式；設定面板與上方「設定」按鈕合併為單一開關，預設收合；第一軌音訊改為 100ms（1600 samples）固定分塊送出並提高 VAD 靈敏度（startOfSpeechSensitivity=HIGH），改善偵測不到語音起始的問題；雙軌共用同一份 16 kHz / Mono / PCM16 原始音訊；第一軌具備 session resumption、重連與無回應 watchdog；第二軌逐段排隊、使用正確的 inlineData 音訊欄位。
+  v3.1.13.1：修復第一軌 WebSocket 缺失的 eventToText() 解析函式；設定面板與上方「設定」按鈕合併為單一開關；第一軌音訊改為 100ms 固定分塊送出並提高 VAD 靈敏度；重採樣新增抗鋸齒低通濾波，修正 44.1kHz/48kHz 降採樣時語音失真嚴重的問題；修正停止時第二軌佇列未等待完成就提前結束的競態問題；雙軌共用同一份 16 kHz / Mono / PCM16 原始音訊；第一軌具備 session resumption、重連與無回應 watchdog。
 </div>
 </div>
 
@@ -293,18 +293,35 @@ function floatToPCM16(float32){
   return out.buffer;
 }
 
+function lowpassFilter(input, sampleRate, cutoff){
+  // Simple one-pole IIR lowpass to attenuate energy above the target Nyquist
+  // before decimating, so downsampling doesn't fold high frequencies back
+  // into the audible/speech band as noise (this was destroying voice clarity).
+  const rc=1/(2*Math.PI*cutoff);
+  const dt=1/sampleRate;
+  const alpha=dt/(rc+dt);
+  const out=new Float32Array(input.length);
+  let prev=input.length?input[0]:0;
+  for(let i=0;i<input.length;i++){
+    prev=prev+alpha*(input[i]-prev);
+    out[i]=prev;
+  }
+  return out;
+}
+
 function resampleTo16k(input, inputRate){
   const target=16000;
   if(inputRate===target) return input;
+  const filtered=inputRate>target ? lowpassFilter(input,inputRate,target*0.45) : input;
   const ratio=inputRate/target;
-  const newLen=Math.round(input.length/ratio);
+  const newLen=Math.round(filtered.length/ratio);
   const out=new Float32Array(newLen);
   for(let i=0;i<newLen;i++){
     const pos=i*ratio;
     const idx=Math.floor(pos);
     const frac=pos-idx;
-    const a=input[Math.min(idx,input.length-1)];
-    const b=input[Math.min(idx+1,input.length-1)];
+    const a=filtered[Math.min(idx,filtered.length-1)];
+    const b=filtered[Math.min(idx+1,filtered.length-1)];
     out[i]=a+(b-a)*frac;
   }
   return out;
@@ -341,8 +358,6 @@ function sendLiveAudioRaw(pcmBuffer){
   }catch(e){log('WebSocket 發送失敗：'+e.message,'ERROR');}
 }
 function sendLiveAudio(pcmBuffer){
-  // Coalesce into ~100ms (1600 samples @16kHz) frames per Live API guidance,
-  // instead of forwarding whatever size the ScriptProcessor happens to hand us.
   const incoming=new Int16Array(pcmBuffer);
   const merged=new Int16Array(liveSendBuf.length+incoming.length);
   merged.set(liveSendBuf,0);
@@ -638,22 +653,32 @@ ${transcriptTail || '(無)'}`;
 }
 
 function enqueueSecondChunk(pcmBuffers, seconds, isFlush=false){
-  if(!pcmBuffers.length || seconds<0.5) return;
+  if(!pcmBuffers.length || seconds<0.5) return Promise.resolve();
   const copy=pcmBuffers.map(b=>b.slice(0));
   const seq=++chunkIndex;
   secondQueue.push({pcmBuffers:copy,seconds,isFlush,seq});
   log(`第二軌 #${seq} 已進入佇列；目前佇列 ${secondQueue.length} 段。`);
-  processSecondQueue();
+  return processSecondQueue();
 }
 
+let secondQueueDrain=Promise.resolve();
 async function processSecondQueue(){
-  if(secondSending || !secondQueue.length) return;
-  secondSending=true;
-  while(secondQueue.length){
-    const item=secondQueue.shift();
-    await sendSecondChunk(item.pcmBuffers,item.seconds,item.isFlush,item.seq);
+  if(secondSending){
+    // Someone else is already draining the queue; return a promise that
+    // resolves once the in-flight drain (which includes anything just
+    // pushed) finishes, instead of silently doing nothing.
+    return secondQueueDrain;
   }
-  secondSending=false;
+  if(!secondQueue.length) return;
+  secondSending=true;
+  secondQueueDrain=(async()=>{
+    while(secondQueue.length){
+      const item=secondQueue.shift();
+      await sendSecondChunk(item.pcmBuffers,item.seconds,item.isFlush,item.seq);
+    }
+    secondSending=false;
+  })();
+  return secondQueueDrain;
 }
 
 function renderTrack2(){
@@ -674,8 +699,8 @@ function addPCMToChunk(pcmBuffer){
 
 function flushChunk(force=false){
   const secs=chunkSamples/2/16000;
-  if(secs<=0) return;
-  if(!force && secs<0.5) return;
+  if(secs<=0) return Promise.resolve();
+  if(!force && secs<0.5) return Promise.resolve();
 
   const parts=chunkParts;
   const seconds=secs;
@@ -683,7 +708,7 @@ function flushChunk(force=false){
   chunkSamples=0;
   chunkStartedAt=performance.now();
 
-  enqueueSecondChunk(parts,seconds,force);
+  return enqueueSecondChunk(parts,seconds,force);
 }
 
 function updateProgress(){
@@ -784,12 +809,15 @@ async function stop(){
   closeWS();
   if(wakeLock){try{await wakeLock.release();}catch{}wakeLock=null;}
   const secs=chunkSamples/2/16000;
-  if(secs>0.5) flushChunk(true);
-  else {chunkParts=[];chunkSamples=0;}
-  await processSecondQueue();
+  if(secs>0.5){
+    await flushChunk(true);
+  } else {
+    chunkParts=[];chunkSamples=0;
+    await processSecondQueue();
+  }
   updateProgress();
   setStatus('已停止',false);
-  log('所有服務已停止。');
+  log('所有服務已停止（第二軌已全部處理完畢）。');
   stopping=false;
 }
 
@@ -797,7 +825,7 @@ function exportMarkdown(){
   const lines=[
     '# Gemini 雙軌即時同傳記錄',
     '',
-    `- 版本：3.1.0`,
+    `- 版本：3.1.13`,
     `- 匯出時間：${new Date().toLocaleString()}`,
     `- 目標語言：${els.target.value}`,
     `- 第一軌模型：${els.model1.value}`,
@@ -834,7 +862,7 @@ document.addEventListener('visibilitychange',async()=>{
   }
 });
 
-loadSettings();bindSettings();log('v3.1.13 載入完成。');
+loadSettings();bindSettings();log('v3.1.13.1 載入完成。');
 })();
 </script>
 </body>
