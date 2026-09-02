@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>GEMINI 雙軌即時同譯 v3.2.1</title>
+<title>GEMINI 雙軌即時同譯 v3.2.2</title>
 <style>
 :root{--bg:#0b1020;--panel:#121a2b;--panel2:#182235;--text:#eef2ff;--muted:#9aa7bd;--line:#2a3750;--accent:#60a5fa;--danger:#ef4444;--warn:#f59e0b;--ok:#34d399;--radius:14px}
 *{box-sizing:border-box}
@@ -70,7 +70,7 @@ details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
 <div class="container">
 <header>
   <div class="title-row">
-    <h1>GEMINI 雙軌即時同譯 <span class="version">v3.2.1</span></h1>
+    <h1>GEMINI 雙軌即時同譯 <span class="version">v3.2.2</span></h1>
   </div>
   <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">待機</span></div>
 </header>
@@ -152,7 +152,7 @@ details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
 </div>
 
 <div class="footer">
-  v3.2.1：第二軌精翻要求辨識可聽見的背景／環境音並以括號標示，例如(水聲)；五個主要控制按鈕固定同列；版本號固定顯示於標題列。
+  v3.2.2：第二軌精翻要求辨識可聽見的背景／環境音並以括號標示，例如(水聲)；五個主要控制按鈕固定同列；版本號固定顯示於標題列。
 </div>
 </div>
 
@@ -344,6 +344,31 @@ function flushPendingAudio(){
   if(q.length) log(`已補送握手期間暫存音訊：${q.length} 塊。`);
 }
 
+
+async function eventToText(data){
+  // Safari/iOS may deliver WebSocket messages as Blob instead of String.
+  // Gemini Live API messages are JSON; convert every supported payload type
+  // to UTF-8 text before JSON.parse().
+  if(typeof data === 'string') return data;
+
+  if(data instanceof Blob){
+    const buffer = await data.arrayBuffer();
+    return new TextDecoder('utf-8').decode(new Uint8Array(buffer));
+  }
+
+  if(data instanceof ArrayBuffer){
+    return new TextDecoder('utf-8').decode(new Uint8Array(data));
+  }
+
+  if(ArrayBuffer.isView(data)){
+    return new TextDecoder('utf-8').decode(
+      new Uint8Array(data.buffer, data.byteOffset, data.byteLength)
+    );
+  }
+
+  throw new Error('Unsupported WebSocket message type: '+Object.prototype.toString.call(data));
+}
+
 function openWebSocket(){
   const key=els.api.value.trim();
   const model=els.model1.value.trim();
@@ -354,6 +379,7 @@ function openWebSocket(){
 
   ws.onopen=()=>{
     log('WebSocket 已連線，發送 setup。');
+    log('WebSocket binaryType='+ws.binaryType+'；iOS/Safari 可能以 Blob 回傳 JSON。');
     const setup={
       setup:{
         model:`models/${model}`,
@@ -381,17 +407,12 @@ function openWebSocket(){
     },10000);
   };
 
-  ws.onmessage=ev=>{
+  ws.onmessage=async ev=>{
     try{
-      // v3.1-compatible handling: Gemini Live API returns JSON text.
-      // Do NOT call eventToText() here; it was undefined in v3.2.0 and
-      // caused setupComplete to be discarded.
-      if(typeof ev.data!=='string'){
-        log('WebSocket 收到非文字資料，略過。','WARN');
-        return;
-      }
+      const text=await eventToText(ev.data);
+      if(!text) return;
 
-      const data=JSON.parse(ev.data);
+      const data=JSON.parse(text);
 
       if(data.setupComplete){
         wsReady=true;
@@ -431,6 +452,7 @@ function openWebSocket(){
       }
 
       const c=data.serverContent;
+
       if(c?.interimInputTranscription?.text){
         currentInterim=c.interimInputTranscription.text;
         lastTranscriptAt=performance.now();
@@ -447,10 +469,12 @@ function openWebSocket(){
       }
     }catch(e){
       log('WebSocket JSON 解析失敗：'+e.message,'WARN');
-      if(typeof ev.data==='string') log('收到資料片段：'+ev.data.slice(0,500),'WARN');
+      try{
+        const raw=await eventToText(ev.data);
+        log('收到資料片段：'+raw.slice(0,500),'WARN');
+      }catch{}
     }
   };
-
   ws.onerror=()=>log('WebSocket onerror。','ERROR');
 
   ws.onclose=ev=>{
@@ -772,7 +796,7 @@ function exportMarkdown(){
   const lines=[
     '# GEMINI 雙軌即時同譯記錄',
     '',
-    `- 版本：3.2.1`,
+    `- 版本：3.2.2`,
     `- 匯出時間：${new Date().toLocaleString()}`,
     `- 目標語言：${els.target.value}`,
     `- 第一軌模型：${els.model1.value}`,
@@ -809,7 +833,7 @@ document.addEventListener('visibilitychange',async()=>{
   }
 });
 
-loadSettings();bindSettings();log('v3.2.1 載入完成。');
+loadSettings();bindSettings();log('v3.2.2 載入完成。');
 })();
 </script>
 </body>
