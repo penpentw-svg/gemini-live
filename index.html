@@ -419,7 +419,8 @@
                 <div class="setting-item">
                     <label>第一軌模型 (即時)</label>
                     <select id="track1Model">
-                        <option value="gemini-3.5-flash-live" selected>Gemini 3.5 Flash Live (推薦)</option>
+                        <option value="gemini-3.5-transcribe-live" selected>Gemini 3.5 Transcribe Live (即時逐字稿)</option>
+                        <option value="gemini-3.5-live-translate-preview">Gemini 3.5 Live Translate (語音對語音)</option>
                         <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                         <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                         <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
@@ -532,7 +533,7 @@
 
     <!-- 頁尾 -->
     <footer>
-        <span class="version-badge">v1.8.0 (2026.09.02-r5)</span>
+        <span class="version-badge">v1.9.0 (2026.09.02-r6)</span>
     </footer>
 
     <script>
@@ -555,7 +556,8 @@
             targetLanguage: 'zh-TW',
             audioQueue: [], // 等待 setupComplete 的音訊佇列
             wsReconnectAttempts: 0,
-            maxWsReconnectAttempts: 3
+            maxWsReconnectAttempts: 3,
+            isFatalError: false // 標記是否為致命錯誤（如模型不存在）
         };
 
         // 語言對應表
@@ -724,7 +726,7 @@
             return new Blob([wavBuffer], { type: 'audio/wav' });
         }
 
-        // ==================== 第一軌：WebSocket 即時同傳 (修復 1007/1008 問題) ====================
+        // ==================== 第一軌：WebSocket 即時同傳 (修正模型 ID 和 API 版本) ====================
         async function startTrack1() {
             const apiKey = document.getElementById('apiKey').value.trim();
             if (!apiKey) {
@@ -735,8 +737,8 @@
             const model = document.getElementById('track1Model').value;
             const targetLang = languageMap[state.targetLanguage];
 
-            // 正確的第一軌 WebSocket 端點格式 (BidiGenerateContent)
-            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+            // 修正：使用 v1beta API 版本 (v1alpha 已棄用或不支援某些模型)
+            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
 
             try {
                 // 重置狀態
@@ -744,6 +746,7 @@
                 state.isWaitingForSetupResponse = true;
                 state.audioQueue = [];
                 state.wsReconnectAttempts = 0;
+                state.isFatalError = false;
 
                 state.webSocket = new WebSocket(wsUrl);
 
@@ -760,7 +763,7 @@
                         clearTimeout(connectionTimeout);
                         log('WebSocket 連線已建立 (OPEN)', 'info');
                         
-                        // 發送 setup 封包 (修正格式)
+                        // 發送 setup 封包
                         sendSetupMessage(model, targetLang);
                         state.isWaitingForSetupResponse = true;
                     };
@@ -770,7 +773,7 @@
                             const response = JSON.parse(event.data);
                             log(`收到伺服器回應：${JSON.stringify(response).substring(0, 200)}...`, 'info');
                             
-                            // 關鍵修復：檢查 setupComplete 或 serverContent
+                            // 檢查 setupComplete
                             if (response.setupComplete === true) {
                                 state.isSetupComplete = true;
                                 state.isWaitingForSetupResponse = false;
@@ -783,7 +786,7 @@
                                 return;
                             }
 
-                            // 某些模型可能直接回傳 serverContent 而不回傳 setupComplete
+                            // 某些模型可能直接回傳 serverContent
                             if (response.serverContent) {
                                 if (!state.isSetupComplete) {
                                     state.isSetupComplete = true;
@@ -797,7 +800,7 @@
                                 processTranscriptResponse(response);
                             }
 
-                            // 處理其他可能的回應格式
+                            // 處理 transcript 回應
                             if (response.transcript && response.transcript.results) {
                                 if (!state.isSetupComplete) {
                                     state.isSetupComplete = true;
@@ -817,36 +820,58 @@
                     state.webSocket.onerror = (error) => {
                         log(`❌ WebSocket 錯誤：${error.type || 'unknown'}`, 'error');
                         document.getElementById('track1Status').className = 'status-indicator error';
-                        if (state.isWaitingForSetupResponse) {
+                        if (state.isWaitingForSetupResponse && !state.isFatalError) {
                             reject(new Error('WebSocket 錯誤'));
                         }
                     };
 
                     state.webSocket.onclose = (event) => {
-                        log(`WebSocket 已關閉：代碼 ${event.code} - ${event.reason || '無原因'}`, 'warning');
+                        const reason = event.reason || '無原因';
+                        log(`WebSocket 已關閉：代碼 ${event.code} - ${reason}`, 'warning');
                         state.isSetupComplete = false;
                         state.isWaitingForSetupResponse = false;
                         document.getElementById('track1Status').className = 'status-indicator';
                         
-                        // 1007 Invalid JSON 特殊處理
+                        // 檢查是否為致命錯誤（模型不存在或不支援）
+                        if (reason.includes('is not found') || reason.includes('is not supported for bidiGenerateContent')) {
+                            log('❌ 致命錯誤：模型不存在或不支援 Bidi API', 'error');
+                            log('請檢查模型名稱是否正確', 'error');
+                            state.isFatalError = true;
+                            reject(new Error(`模型錯誤：${reason}`));
+                            return;
+                        }
+                        
+                        // 1007 Invalid JSON
                         if (event.code === 1007) {
                             log('❌ 1007 Invalid JSON：setup 封包格式錯誤', 'error');
                             log('請確認模型名稱與 setup 格式正確', 'error');
+                            state.isFatalError = true;
+                            reject(new Error('Invalid JSON'));
+                            return;
                         }
                         
-                        // 1008 Policy Violation 特殊處理
+                        // 1008 Policy Violation - 非致命錯誤才重連
                         if (event.code === 1008) {
-                            log('❌ 1008 Policy Violation：可能是 setup 封包格式錯誤或模型不支援', 'error');
-                            if (state.wsReconnectAttempts < state.maxWsReconnectAttempts) {
+                            log('❌ 1008 Policy Violation', 'error');
+                            if (!state.isFatalError && state.wsReconnectAttempts < state.maxWsReconnectAttempts) {
                                 state.wsReconnectAttempts++;
                                 log(`嘗試重新連線 (${state.wsReconnectAttempts}/${state.maxWsReconnectAttempts})...`, 'warning');
                                 setTimeout(() => {
-                                    startTrack1().catch(e => log(`重連失敗：${e.message}`, 'error'));
+                                    startTrack1().catch(e => {
+                                        if (!state.isFatalError) {
+                                            log(`重連失敗：${e.message}`, 'error');
+                                        }
+                                    });
                                 }, 2000);
+                            } else if (state.isFatalError) {
+                                log('不重連：致命錯誤', 'error');
+                            } else {
+                                log('已達最大重連次數', 'error');
                             }
+                            return;
                         }
                         
-                        if (state.isWaitingForSetupResponse) {
+                        if (state.isWaitingForSetupResponse && !state.isFatalError) {
                             reject(new Error(`WebSocket 關閉：${event.code}`));
                         }
                     };
@@ -859,14 +884,12 @@
         }
 
         function sendSetupMessage(model, targetLang) {
-            // 修正：使用正確的 Bidi API setup 格式
-            // languageCode 不應該放在 generationConfig 內
+            // 修正：使用正確的 setup 格式，移除 languageCode
             const setupMessage = {
                 setup: {
                     model: `models/${model}`,
                     generationConfig: {
                         responseModalities: ['TEXT']
-                        // 移除 languageCode - 這是導致 1007 錯誤的原因
                     },
                     systemInstruction: {
                         parts: [{
@@ -877,7 +900,7 @@
             };
 
             state.webSocket.send(JSON.stringify(setupMessage));
-            log('已傳送 setup 封包 (等待 setupComplete 回應)', 'info');
+            log(`已傳送 setup 封包 (模型：${model})`, 'info');
         }
 
         function processTranscriptResponse(response) {
@@ -921,7 +944,7 @@
             };
 
             try {
-                // 關鍵修復：必須等待 setupComplete 後才能發送音訊
+                // 必須等待 setupComplete 後才能發送音訊
                 if (state.isSetupComplete) {
                     state.webSocket.send(JSON.stringify(audioMessage));
                 } else {
@@ -1196,7 +1219,7 @@
                     const inputData = inputBuffer.getChannelData(0);
                     const pcmData = float32ToInt16PCM(inputData);
 
-                    // 第一軌：即時傳送 (會根據 isSetupComplete 決定是否發送或加入佇列)
+                    // 第一軌：即時傳送
                     sendAudioChunk(new Uint8Array(pcmData.buffer));
 
                     // 第二軌：累積到緩衝區
@@ -1322,7 +1345,13 @@
 
             } catch (error) {
                 log(`啟動失敗：${error.message}`, 'error');
-                alert(`啟動失敗：${error.message}\n\n請確認：\n1. 已授予麥克風權限\n2. 使用 HTTPS 或 localhost\n3. API Key 正確\n4. 模型名稱正確`);
+                
+                // 如果是致命錯誤，顯示明確提示
+                if (state.isFatalError) {
+                    alert(`模型錯誤：${error.message}\n\n請在設定中選擇正確的模型：\n- Gemini 3.5 Transcribe Live (即時逐字稿)\n- Gemini 3.5 Live Translate (語音對語音)`);
+                } else {
+                    alert(`啟動失敗：${error.message}\n\n請確認：\n1. 已授予麥克風權限\n2. 使用 HTTPS 或 localhost\n3. API Key 正確\n4. 模型名稱正確`);
+                }
                 
                 // 清理
                 await stopRecording();
@@ -1373,6 +1402,7 @@
             state.isRecording = false;
             state.isSetupComplete = false;
             state.isWaitingForSetupResponse = false;
+            state.isFatalError = false;
             state.pcmChunkBuffer = [];
             state.audioQueue = [];
 
