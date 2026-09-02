@@ -113,7 +113,7 @@
             cursor: pointer;
         }
 
-        /* 控制按鈕區 - 橫列排版 */
+        /* 控制按鈕區 */
         .controls {
             display: flex;
             gap: 12px;
@@ -123,7 +123,7 @@
             flex-wrap: wrap;
         }
 
-        /* 主要控制按鈕區 (在設定選單外) */
+        /* 主要控制按鈕區 */
         .main-controls {
             display: flex;
             gap: 12px;
@@ -148,8 +148,9 @@
         }
 
         button:disabled {
-            opacity: 0.5;
+            opacity: 0.4;
             cursor: not-allowed;
+            filter: grayscale(100%);
         }
 
         .btn-start {
@@ -283,8 +284,12 @@
         .progress-bar {
             height: 100%;
             background: linear-gradient(90deg, var(--secondary-color), #2d9249);
-            width: 100%;
+            width: 0%;
             transition: width 0.1s linear;
+        }
+
+        .progress-bar.sending {
+            background: linear-gradient(90deg, #ff9800, #f57c00);
         }
 
         .progress-text {
@@ -397,21 +402,6 @@
                 padding: 12px;
             }
         }
-
-        /* 載入動畫 */
-        .loading-spinner {
-            display: inline-block;
-            width: 16px;
-            height: 16px;
-            border: 2px solid rgba(255,255,255,0.3);
-            border-radius: 50%;
-            border-top-color: white;
-            animation: spin 0.8s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
     </style>
 </head>
 <body>
@@ -479,7 +469,6 @@
                 </div>
             </div>
 
-            <!-- 設定選單內的按鈕 (保留給進階使用者) -->
             <div class="controls">
                 <button class="btn-export" id="btnExportSettings" disabled>
                     <span>📥</span> 匯出記錄
@@ -488,12 +477,15 @@
         </details>
     </div>
 
-    <!-- 主要控制按鈕區 (在設定選單外) -->
+    <!-- 主要控制按鈕區 -->
     <div class="main-controls">
-        <button class="btn-start" id="btnToggle">
-            <span>🎤</span> <span id="btnToggleText">啟動收音</span>
+        <button class="btn-start" id="btnStart">
+            <span>🎤</span> 啟動收音
         </button>
-        <button class="btn-export" id="btnExport">
+        <button class="btn-stop" id="btnStop" disabled>
+            <span>⏹️</span> 停止收音
+        </button>
+        <button class="btn-export" id="btnExport" disabled>
             <span>📥</span> 匯出記錄
         </button>
         <button class="btn-copy" id="btnCopyLog">
@@ -503,30 +495,26 @@
 
     <!-- 雙軌顯示區 -->
     <div class="tracks-container">
-        <!-- 第一軌：即時同傳 -->
         <div class="track" id="track1" style="flex: var(--track1-height);">
             <div class="track-header">
                 <span class="status-indicator" id="track1Status"></span>
-                第一軌：即時同傳 (Fast Live Stream)
+                第一軌：即時同傳
             </div>
             <div class="track-content" id="track1Content">
                 <div style="color: var(--text-secondary); text-align: center; padding: 40px 20px;">
-                    尚未啟動收音<br>
-                    點擊「啟動收音」開始即時同傳
+                    尚未啟動收音
                 </div>
             </div>
         </div>
 
-        <!-- 第二軌：精翻摘要 -->
         <div class="track" id="track2" style="flex: var(--track2-height);">
             <div class="track-header track2">
                 <span class="status-indicator" id="track2Status"></span>
-                第二軌：時間軸精翻卡片 (Deep Hard Chunking)
+                第二軌：硬切精翻
             </div>
             <div class="track-content" id="track2Content">
                 <div style="color: var(--text-secondary); text-align: center; padding: 40px 20px;">
-                    等待切片完成<br>
-                    每 <span id="chunkDurationDisplay">10</span> 秒自動生成精翻卡片
+                    等待切片完成
                 </div>
             </div>
         </div>
@@ -542,39 +530,34 @@
 
     <!-- 除錯面板 -->
     <div class="debug-panel" id="debugPanel">
-        <div class="debug-log info">系統就緒，等待啟動...</div>
+        <div class="debug-log info">系統就緒</div>
     </div>
 
     <!-- 頁尾 -->
     <footer>
-        <span class="version-badge">v2.0.0 (2026.09.02-r7)</span>
+        <span class="version-badge">v2.1.0 (2026.09.02-r8)</span>
     </footer>
 
     <script>
-        // ==================== 全域狀態 ====================
         const state = {
             isRecording: false,
             isSetupComplete: false,
-            isWaitingForSetupResponse: false,
             audioContext: null,
             mediaStream: null,
             scriptProcessor: null,
             webSocket: null,
             pcmChunkBuffer: [],
             chunkStartTime: 0,
-            chunkDuration: 10000, // 毫秒
+            chunkDuration: 10000,
             track1Transcripts: [],
             track2Transcripts: [],
             wakeLock: null,
             chunkTimer: null,
             targetLanguage: 'zh-TW',
-            audioQueue: [], // 等待 setupComplete 的音訊佇列
-            wsReconnectAttempts: 0,
-            maxWsReconnectAttempts: 3,
-            isFatalError: false // 標記是否為致命錯誤（如模型不存在）
+            audioQueue: [],
+            isFatalError: false
         };
 
-        // 語言對應表
         const languageMap = {
             'zh-TW': '繁體中文',
             'zh-CN': '簡體中文',
@@ -582,7 +565,6 @@
             'en': '英文'
         };
 
-        // ==================== LocalStorage 設定管理 ====================
         const STORAGE_KEY = 'gemini_dual_track_settings_v1';
 
         function loadSettings() {
@@ -590,1002 +572,444 @@
                 const saved = localStorage.getItem(STORAGE_KEY);
                 if (saved) {
                     const settings = JSON.parse(saved);
-                    
-                    if (settings.targetLanguage) {
-                        document.getElementById('targetLanguage').value = settings.targetLanguage;
-                        state.targetLanguage = settings.targetLanguage;
+                    for (let k in settings) {
+                        const el = document.getElementById(k);
+                        if (el) {
+                            el.value = settings[k];
+                            if (k === 'targetLanguage') state.targetLanguage = settings[k];
+                            if (k === 'chunkDuration') state.chunkDuration = parseInt(settings[k]) * 1000;
+                        }
                     }
-                    
-                    if (settings.track1Model) {
-                        document.getElementById('track1Model').value = settings.track1Model;
-                    }
-                    
-                    if (settings.track2Model) {
-                        document.getElementById('track2Model').value = settings.track2Model;
-                    }
-                    
-                    if (settings.chunkDuration) {
-                        document.getElementById('chunkDuration').value = settings.chunkDuration;
-                        state.chunkDuration = parseInt(settings.chunkDuration) * 1000;
-                    }
-                    
-                    if (settings.fontSize) {
-                        document.getElementById('fontSize').value = settings.fontSize;
-                        document.getElementById('fontSizeValue').textContent = settings.fontSize;
-                        document.documentElement.style.setProperty('--content-font-size', `${settings.fontSize}px`);
-                    }
-                    
-                    if (settings.layoutRatio) {
-                        document.getElementById('layoutRatio').value = settings.layoutRatio;
-                        const track1Pct = parseInt(settings.layoutRatio);
-                        const track2Pct = 100 - track1Pct;
-                        document.documentElement.style.setProperty('--track1-height', `${track1Pct}%`);
-                        document.documentElement.style.setProperty('--track2-height', `${track2Pct}%`);
-                    }
-                    
-                    if (settings.apiKey) {
-                        document.getElementById('apiKey').value = settings.apiKey;
-                    }
-                    
-                    log('設定已從 LocalStorage 載入', 'info');
+                    applyUI();
+                    log('設定已載入', 'info');
                 }
-            } catch (error) {
-                log(`載入設定失敗：${error.message}`, 'warning');
+            } catch (e) {
+                log(`載入設定失敗：${e.message}`, 'warning');
             }
         }
 
         function saveSettings() {
-            try {
-                const settings = {
-                    targetLanguage: document.getElementById('targetLanguage').value,
-                    track1Model: document.getElementById('track1Model').value,
-                    track2Model: document.getElementById('track2Model').value,
-                    chunkDuration: document.getElementById('chunkDuration').value,
-                    fontSize: document.getElementById('fontSize').value,
-                    layoutRatio: document.getElementById('layoutRatio').value,
-                    apiKey: document.getElementById('apiKey').value
-                };
-                localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-                log('設定已儲存至 LocalStorage', 'info');
-            } catch (error) {
-                log(`儲存設定失敗：${error.message}`, 'warning');
-            }
+            const settings = {
+                targetLanguage: document.getElementById('targetLanguage').value,
+                track1Model: document.getElementById('track1Model').value,
+                track2Model: document.getElementById('track2Model').value,
+                chunkDuration: document.getElementById('chunkDuration').value,
+                fontSize: document.getElementById('fontSize').value,
+                layoutRatio: document.getElementById('layoutRatio').value,
+                apiKey: document.getElementById('apiKey').value
+            };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
         }
 
-        // ==================== 工具函數 ====================
         function log(message, type = 'info') {
-            const debugPanel = document.getElementById('debugPanel');
-            const logEntry = document.createElement('div');
-            logEntry.className = `debug-log ${type}`;
-            const timestamp = new Date().toLocaleTimeString('zh-TW', { hour12: false });
-            logEntry.textContent = `[${timestamp}] ${message}`;
-            debugPanel.appendChild(logEntry);
-            debugPanel.scrollTop = debugPanel.scrollHeight;
+            const panel = document.getElementById('debugPanel');
+            const entry = document.createElement('div');
+            entry.className = `debug-log ${type}`;
+            const ts = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+            entry.textContent = `[${ts}] ${message}`;
+            panel.appendChild(entry);
+            panel.scrollTop = panel.scrollHeight;
         }
 
-        function float32ToInt16PCM(float32Array) {
-            const int16Array = new Int16Array(float32Array.length);
-            for (let i = 0; i < float32Array.length; i++) {
-                const s = Math.max(-1, Math.min(1, float32Array[i]));
-                int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        function applyUI() {
+            document.getElementById('fontSizeValue').textContent = document.getElementById('fontSize').value;
+            document.documentElement.style.setProperty('--content-font-size', document.getElementById('fontSize').value + 'px');
+            const r = parseInt(document.getElementById('layoutRatio').value);
+            document.getElementById('track1').style.flex = r + '%';
+            document.getElementById('track2').style.flex = (100 - r) + '%';
+        }
+
+        function float32ToInt16PCM(f) {
+            const a = new Int16Array(f.length);
+            for (let i = 0; i < f.length; i++) {
+                const s = Math.max(-1, Math.min(1, f[i]));
+                a[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
             }
-            return int16Array;
+            return a;
         }
 
-        function arrayBufferToBase64(buffer) {
-            let binary = '';
-            const bytes = new Uint8Array(buffer);
-            const len = bytes.byteLength;
-            for (let i = 0; i < len; i++) {
-                binary += String.fromCharCode(bytes[i]);
-            }
-            return window.btoa(binary);
+        function arrayBufferToBase64(buf) {
+            let s = '';
+            const u = new Uint8Array(buf);
+            for (let i = 0; i < u.length; i++) s += String.fromCharCode(u[i]);
+            return btoa(s);
         }
 
-        function createWavHeader(dataLength, sampleRate = 16000) {
-            const header = new ArrayBuffer(44);
-            const view = new DataView(header);
-
-            // RIFF identifier
-            writeString(view, 0, 'RIFF');
-            // file length minus RIFF identifier length and file description length
-            view.setUint32(4, 36 + dataLength, true);
-            // RIFF type
-            writeString(view, 8, 'WAVE');
-            // format chunk identifier
-            writeString(view, 12, 'fmt ');
-            // format chunk length
-            view.setUint32(16, 16, true);
-            // sample format (raw)
-            view.setUint16(20, 1, true);
-            // channel count
-            view.setUint16(22, 1, true);
-            // sample rate
-            view.setUint32(24, sampleRate, true);
-            // byte rate (sample rate * block align)
-            view.setUint32(28, sampleRate * 2, true);
-            // block align (channel count * bytes per sample)
-            view.setUint16(32, 2, true);
-            // bits per sample
-            view.setUint16(34, 16, true);
-            // data chunk identifier
-            writeString(view, 36, 'data');
-            // data chunk length
-            view.setUint32(40, dataLength, true);
-
-            return header;
+        function createWavHeader(len, sr = 16000) {
+            const h = new ArrayBuffer(44);
+            const v = new DataView(h);
+            const ws = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+            ws(0, 'RIFF'); v.setUint32(4, 36 + len, true); ws(8, 'WAVE'); ws(12, 'fmt ');
+            v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+            v.setUint32(24, sr, true); v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true);
+            v.setUint16(34, 16, true); ws(36, 'data'); v.setUint32(40, len, true);
+            return h;
         }
 
-        function writeString(view, offset, string) {
-            for (let i = 0; i < string.length; i++) {
-                view.setUint8(offset + i, string.charCodeAt(i));
-            }
+        function createWavBlob(pcm, sr = 16000) {
+            const hdr = createWavHeader(pcm.length * 2, sr);
+            const buf = new ArrayBuffer(hdr.byteLength + pcm.length * 2);
+            const v = new DataView(buf);
+            for (let i = 0; i < hdr.byteLength; i++) v.setUint8(i, new DataView(hdr).getUint8(i));
+            for (let i = 0; i < pcm.length; i++) v.setInt16(44 + i * 2, pcm[i], true);
+            return new Blob([buf], { type: 'audio/wav' });
         }
 
-        function createWavBlob(pcmData, sampleRate = 16000) {
-            const wavHeader = createWavHeader(pcmData.length * 2, sampleRate);
-            const wavBuffer = new ArrayBuffer(wavHeader.byteLength + pcmData.length * 2);
-            const wavView = new DataView(wavBuffer);
-
-            // Copy header
-            for (let i = 0; i < wavHeader.byteLength; i++) {
-                wavView.setUint8(i, new DataView(wavHeader).getUint8(i));
-            }
-
-            // Copy PCM data (convert Int16 to little-endian)
-            for (let i = 0; i < pcmData.length; i++) {
-                wavView.setInt16(44 + i * 2, pcmData[i], true);
-            }
-
-            return new Blob([wavBuffer], { type: 'audio/wav' });
-        }
-
-        // ==================== 複製日誌功能 ====================
         async function copyLog() {
-            const debugPanel = document.getElementById('debugPanel');
-            const logText = debugPanel.innerText;
-
+            const text = document.getElementById('debugPanel').innerText;
             try {
-                // 嘗試使用 Clipboard API
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                    await navigator.clipboard.writeText(logText);
-                    log('✅ 日誌已複製到剪貼簿', 'success');
+                if (navigator.clipboard) {
+                    await navigator.clipboard.writeText(text);
                 } else {
-                    // 備援方案：建立臨時 textarea
-                    const textarea = document.createElement('textarea');
-                    textarea.value = logText;
-                    textarea.style.position = 'fixed';
-                    textarea.style.opacity = '0';
-                    document.body.appendChild(textarea);
-                    textarea.select();
+                    const ta = document.createElement('textarea');
+                    ta.value = text;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.select();
                     document.execCommand('copy');
-                    document.body.removeChild(textarea);
-                    log('✅ 日誌已複製到剪貼簿', 'success');
+                    document.body.removeChild(ta);
                 }
-            } catch (error) {
-                log(`❌ 複製失敗：${error.message}`, 'error');
+                log('✅ 日誌已複製', 'success');
+            } catch (e) {
+                log(`❌ 複製失敗：${e.message}`, 'error');
             }
         }
 
-        // ==================== 第一軌：WebSocket 即時同傳 (修正模型 ID 和 API 版本) ====================
         async function startTrack1() {
-            const apiKey = document.getElementById('apiKey').value.trim();
-            if (!apiKey) {
-                log('錯誤：請先輸入 API Key', 'error');
-                return false;
-            }
-
+            const key = document.getElementById('apiKey').value.trim();
+            if (!key) throw new Error('請輸入 API Key');
             const model = document.getElementById('track1Model').value;
-            const targetLang = languageMap[state.targetLanguage];
+            const lang = languageMap[state.targetLanguage];
+            const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${key}`;
 
-            // 修正：使用 v1beta API 版本 (v1alpha 已棄用或不支援某些模型)
-            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${apiKey}`;
+            state.isSetupComplete = false;
+            state.audioQueue = [];
+            state.isFatalError = false;
 
-            try {
-                // 重置狀態
-                state.isSetupComplete = false;
-                state.isWaitingForSetupResponse = true;
-                state.audioQueue = [];
-                state.wsReconnectAttempts = 0;
-                state.isFatalError = false;
+            return new Promise((ok, bad) => {
+                const ws = new WebSocket(url);
+                state.webSocket = ws;
 
-                state.webSocket = new WebSocket(wsUrl);
+                const timeout = setTimeout(() => {
+                    if (ws.readyState === WebSocket.CONNECTING) {
+                        log('WebSocket 連線逾時', 'error');
+                        ws.close();
+                        bad(new Error('連線逾時'));
+                    }
+                }, 10000);
 
-                return new Promise((resolve, reject) => {
-                    const connectionTimeout = setTimeout(() => {
-                        if (state.webSocket && state.webSocket.readyState === WebSocket.CONNECTING) {
-                            log('WebSocket 連線逾時 (10 秒)', 'error');
-                            state.webSocket.close();
-                            reject(new Error('WebSocket 連線逾時'));
-                        }
-                    }, 10000);
-
-                    state.webSocket.onopen = () => {
-                        clearTimeout(connectionTimeout);
-                        log('WebSocket 連線已建立 (OPEN)', 'info');
-                        
-                        // 發送 setup 封包
-                        sendSetupMessage(model, targetLang);
-                        state.isWaitingForSetupResponse = true;
-                    };
-
-                    state.webSocket.onmessage = (event) => {
-                        try {
-                            // 檢查 event.data 類型
-                            let dataStr;
-                            if (typeof event.data === 'string') {
-                                dataStr = event.data;
-                            } else if (event.data instanceof Blob) {
-                                // Blob 轉字串（備援）
-                                const reader = new FileReader();
-                                reader.onload = () => {
-                                    handleWebSocketMessage(reader.result, resolve, reject);
-                                };
-                                reader.onerror = () => {
-                                    log('Blob 讀取失敗', 'error');
-                                };
-                                reader.readAsText(event.data);
-                                return;
-                            } else if (event.data instanceof ArrayBuffer) {
-                                // ArrayBuffer 轉字串（備援）
-                                const decoder = new TextDecoder('utf-8');
-                                dataStr = decoder.decode(event.data);
-                            } else {
-                                log(`未知的 WebSocket 數據類型：${typeof event.data}`, 'warning');
-                                return;
+                ws.onopen = () => {
+                    clearTimeout(timeout);
+                    log('WebSocket 連線已建立', 'info');
+                    const setup = {
+                        setup: {
+                            model: `models/${model}`,
+                            generationConfig: { responseModalities: ['TEXT'] },
+                            systemInstruction: {
+                                parts: [{ text: `你是即時同傳系統。將語音翻譯成${lang}。只輸出「原文 (翻譯)」，不可加問候或解釋。` }]
                             }
-
-                            handleWebSocketMessage(dataStr, resolve, reject);
-
-                        } catch (e) {
-                            log(`WebSocket 訊息處理錯誤：${e.message}`, 'error');
                         }
                     };
+                    ws.send(JSON.stringify(setup));
+                    log(`已傳送 setup (模型：${model})`, 'info');
+                };
 
-                    state.webSocket.onerror = (error) => {
-                        log(`❌ WebSocket 錯誤：${error.type || 'unknown'}`, 'error');
-                        document.getElementById('track1Status').className = 'status-indicator error';
-                        if (state.isWaitingForSetupResponse && !state.isFatalError) {
-                            reject(new Error('WebSocket 錯誤'));
-                        }
-                    };
-
-                    state.webSocket.onclose = (event) => {
-                        const reason = event.reason || '無原因';
-                        log(`WebSocket 已關閉：代碼 ${event.code} - ${reason}`, 'warning');
-                        state.isSetupComplete = false;
-                        state.isWaitingForSetupResponse = false;
-                        document.getElementById('track1Status').className = 'status-indicator';
-                        
-                        // 檢查是否為致命錯誤（模型不存在或不支援）
-                        if (reason.includes('is not found') || reason.includes('is not supported for bidiGenerateContent')) {
-                            log('❌ 致命錯誤：模型不存在或不支援 Bidi API', 'error');
-                            log('請檢查模型名稱是否正確', 'error');
-                            state.isFatalError = true;
-                            reject(new Error(`模型錯誤：${reason}`));
+                ws.onmessage = (e) => {
+                    try {
+                        let dataStr;
+                        if (typeof e.data === 'string') dataStr = e.data;
+                        else if (e.data instanceof Blob) {
+                            const r = new FileReader();
+                            r.onload = () => handleMsg(r.result, ok);
+                            r.readAsText(e.data);
+                            return;
+                        } else if (e.data instanceof ArrayBuffer) {
+                            dataStr = new TextDecoder().decode(e.data);
+                        } else {
+                            log(`未知數據類型：${typeof e.data}`, 'warning');
                             return;
                         }
-                        
-                        // 1007 Invalid JSON
-                        if (event.code === 1007) {
-                            log('❌ 1007 Invalid JSON：setup 封包格式錯誤', 'error');
-                            log('請確認模型名稱與 setup 格式正確', 'error');
-                            state.isFatalError = true;
-                            reject(new Error('Invalid JSON'));
-                            return;
-                        }
-                        
-                        // 1008 Policy Violation - 非致命錯誤才重連
-                        if (event.code === 1008) {
-                            log('❌ 1008 Policy Violation', 'error');
-                            if (!state.isFatalError && state.wsReconnectAttempts < state.maxWsReconnectAttempts) {
-                                state.wsReconnectAttempts++;
-                                log(`嘗試重新連線 (${state.wsReconnectAttempts}/${state.maxWsReconnectAttempts})...`, 'warning');
-                                setTimeout(() => {
-                                    startTrack1().catch(e => {
-                                        if (!state.isFatalError) {
-                                            log(`重連失敗：${e.message}`, 'error');
-                                        }
-                                    });
-                                }, 2000);
-                            } else if (state.isFatalError) {
-                                log('不重連：致命錯誤', 'error');
-                            } else {
-                                log('已達最大重連次數', 'error');
-                            }
-                            return;
-                        }
-                        
-                        if (state.isWaitingForSetupResponse && !state.isFatalError) {
-                            reject(new Error(`WebSocket 關閉：${event.code}`));
-                        }
-                    };
-                });
 
-            } catch (error) {
-                log(`WebSocket 連線失敗：${error.message}`, 'error');
-                throw error;
-            }
+                        handleMsg(dataStr, ok);
+                    } catch (err) {
+                        log(`訊息處理錯誤：${err.message}`, 'error');
+                    }
+                };
+
+                ws.onerror = () => {
+                    log('WebSocket 錯誤', 'error');
+                    document.getElementById('track1Status').className = 'status-indicator error';
+                    if (!state.isFatalError) bad(new Error('WebSocket 錯誤'));
+                };
+
+                ws.onclose = (ev) => {
+                    const reason = ev.reason || '無原因';
+                    log(`WebSocket 關閉：${ev.code} - ${reason}`, 'warning');
+                    state.isSetupComplete = false;
+                    document.getElementById('track1Status').className = 'status-indicator';
+
+                    if (reason.includes('not found') || reason.includes('not supported')) {
+                        log('❌ 模型不支援 Bidi API', 'error');
+                        state.isFatalError = true;
+                        bad(new Error(reason));
+                        return;
+                    }
+                    if (ev.code === 1007) {
+                        log('❌ 1007 Invalid JSON', 'error');
+                        state.isFatalError = true;
+                        bad(new Error('Invalid JSON'));
+                        return;
+                    }
+                    if (!state.isFatalError) bad(new Error(`關閉：${ev.code}`));
+                };
+            });
         }
 
-        function handleWebSocketMessage(dataStr, resolve, reject) {
-            let response;
+        function handleMsg(dataStr, ok) {
+            let res;
             try {
-                response = JSON.parse(dataStr);
+                res = JSON.parse(dataStr);
             } catch (e) {
                 log(`JSON 解析失敗：${e.message}`, 'error');
-                log(`原始數據：${dataStr.substring(0, 300)}...`, 'error');
+                log(`原始：${dataStr.substring(0, 300)}...`, 'error');
                 return;
             }
 
-            log(`收到伺服器回應：${JSON.stringify(response).substring(0, 200)}...`, 'info');
-            
-            // 檢查 setupComplete
-            if (response.setupComplete === true) {
+            log(`收到：${JSON.stringify(res).substring(0, 200)}...`, 'info');
+
+            if (res.setupComplete === true) {
                 state.isSetupComplete = true;
-                state.isWaitingForSetupResponse = false;
-                log('✅ WebSocket 協商完成 (setupComplete=true)，開始傳送音訊', 'success');
+                log('✅ setupComplete 收到，開始串流', 'success');
                 document.getElementById('track1Status').className = 'status-indicator active';
-                
-                // 發送佇列中的音訊
-                flushAudioQueue();
-                if (resolve) resolve(true);
+                flushQueue();
+                ok(true);
                 return;
             }
 
-            // 某些模型可能直接回傳 serverContent
-            if (response.serverContent) {
+            if (res.serverContent) {
                 if (!state.isSetupComplete) {
                     state.isSetupComplete = true;
-                    state.isWaitingForSetupResponse = false;
-                    log('✅ 收到 serverContent，視為 setup 完成', 'success');
+                    log('✅ serverContent 收到，視為 setup 完成', 'success');
                     document.getElementById('track1Status').className = 'status-indicator active';
-                    flushAudioQueue();
+                    flushQueue();
                 }
-
-                // 處理轉錄結果
-                processTranscriptResponse(response);
+                processTranscript(res);
             }
 
-            // 處理 transcript 回應
-            if (response.transcript && response.transcript.results) {
+            if (res.transcript?.results) {
                 if (!state.isSetupComplete) {
                     state.isSetupComplete = true;
-                    state.isWaitingForSetupResponse = false;
-                    log('✅ 收到 transcript，視為 setup 完成', 'success');
+                    log('✅ transcript 收到，視為 setup 完成', 'success');
                     document.getElementById('track1Status').className = 'status-indicator active';
-                    flushAudioQueue();
+                    flushQueue();
                 }
-                processTranscriptResponse(response);
+                processTranscript(res);
             }
         }
 
-        function sendSetupMessage(model, targetLang) {
-            // 修正：使用正確的 setup 格式，移除 languageCode
-            const setupMessage = {
-                setup: {
-                    model: `models/${model}`,
-                    generationConfig: {
-                        responseModalities: ['TEXT']
-                    },
-                    systemInstruction: {
-                        parts: [{
-                            text: `你是一個專業的即時同聲傳譯系統。請將所有輸入的語音即時翻譯成${targetLang}。輸出格式嚴格遵守：原文 (目標語言翻譯)。不要輸出任何問候語、解釋或額外內容。只輸出翻譯結果。`
-                        }]
-                    }
-                }
-            };
-
-            state.webSocket.send(JSON.stringify(setupMessage));
-            log(`已傳送 setup 封包 (模型：${model})`, 'info');
-        }
-
-        function processTranscriptResponse(response) {
-            // 處理多種可能的回應格式
-            let results = [];
-            
-            if (response.transcript && response.transcript.results) {
-                results = response.transcript.results;
-            } else if (response.serverContent && response.serverContent.realtimeResponse) {
-                const realtimeResponse = response.serverContent.realtimeResponse;
-                if (realtimeResponse.transcript && realtimeResponse.transcript.results) {
-                    results = realtimeResponse.transcript.results;
-                }
-            }
-
-            for (const result of results) {
-                if (result.isFinal && result.alternatives && result.alternatives.length > 0) {
-                    const text = result.alternatives[0].transcript;
-                    if (text && text.trim()) {
-                        addTrack1Transcript(text, state.targetLanguage);
-                        log(`第一軌收到轉錄：${text.substring(0, 50)}...`, 'info');
-                    }
-                }
-            }
-        }
-
-        function sendAudioChunk(audioData) {
-            if (!state.webSocket || state.webSocket.readyState !== WebSocket.OPEN) {
-                return;
-            }
-
-            const base64Audio = arrayBufferToBase64(audioData.buffer);
-
-            const audioMessage = {
-                realtimeInput: {
-                    mediaChunks: [{
-                        mimeType: 'audio/pcm; rate=16000',
-                        data: base64Audio
-                    }]
-                }
-            };
-
-            try {
-                // 必須等待 setupComplete 後才能發送音訊
-                if (state.isSetupComplete) {
-                    state.webSocket.send(JSON.stringify(audioMessage));
-                } else {
-                    // 加入佇列等待
-                    state.audioQueue.push(audioMessage);
-                }
-            } catch (error) {
-                log(`傳送音訊失敗：${error.message}`, 'error');
-            }
-        }
-
-        function flushAudioQueue() {
-            if (state.audioQueue.length > 0 && state.webSocket && state.webSocket.readyState === WebSocket.OPEN) {
-                log(`發送佇列中的 ${state.audioQueue.length} 個音訊封包`, 'info');
-                for (const message of state.audioQueue) {
-                    try {
-                        state.webSocket.send(JSON.stringify(message));
-                    } catch (error) {
-                        log(`發送佇列封包失敗：${error.message}`, 'error');
-                    }
+        function flushQueue() {
+            if (state.audioQueue.length && state.webSocket?.readyState === 1) {
+                log(`發送佇列 ${state.audioQueue.length} 封包`, 'info');
+                for (const m of state.audioQueue) {
+                    try { state.webSocket.send(JSON.stringify(m)); } catch (e) { log(`佇列發送失敗：${e.message}`, 'error'); }
                 }
                 state.audioQueue = [];
             }
         }
 
-        function addTrack1Transcript(text, targetLang) {
-            const timestamp = new Date().toLocaleTimeString('zh-TW', { hour12: false });
-            const item = {
-                timestamp,
-                text,
-                targetLang
-            };
-            state.track1Transcripts.push(item);
-
-            const contentDiv = document.getElementById('track1Content');
-            
-            // 清除初始提示
-            if (contentDiv.querySelector('div[style*="text-align: center"]')) {
-                contentDiv.innerHTML = '';
+        function processTranscript(res) {
+            const results = res.transcript?.results || res.serverContent?.realtimeResponse?.transcript?.results || [];
+            for (const r of results) {
+                if (r.isFinal && r.alternatives?.[0]?.transcript) {
+                    const t = r.alternatives[0].transcript.trim();
+                    if (t) {
+                        addTrack1Item(t);
+                        log(`第一軌：${t.substring(0, 50)}...`, 'info');
+                    }
+                }
             }
-
-            const transcriptDiv = document.createElement('div');
-            transcriptDiv.className = 'transcript-item';
-            transcriptDiv.innerHTML = `
-                <div class="transcript-original">${text}</div>
-                <div class="transcript-translation">[${timestamp}] ${targetLang}</div>
-            `;
-
-            contentDiv.appendChild(transcriptDiv);
-            contentDiv.scrollTop = contentDiv.scrollHeight;
         }
 
-        // ==================== 第二軌：硬切精翻 ====================
-        async function processChunk() {
-            const apiKey = document.getElementById('apiKey').value.trim();
-            if (!apiKey || state.pcmChunkBuffer.length === 0) {
-                return;
+        function sendLive(a) {
+            if (!state.webSocket || state.webSocket.readyState !== 1) return;
+            const msg = { realtimeInput: { mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: arrayBufferToBase64(a.buffer) }] } };
+            if (state.isSetupComplete) {
+                state.webSocket.send(JSON.stringify(msg));
+            } else {
+                state.audioQueue.push(msg);
             }
+        }
 
-            const model = document.getElementById('track2Model').value;
-            const targetLang = languageMap[state.targetLanguage];
-            const chunkDuration = document.getElementById('chunkDuration').value;
-
-            log(`開始處理第二軌切片 (${chunkDuration}秒)`, 'info');
-
-            // 合併所有 PCM 數據
-            const totalLength = state.pcmChunkBuffer.reduce((acc, chunk) => acc + chunk.length, 0);
-            const mergedPCM = new Int16Array(totalLength);
-            let offset = 0;
-            for (const chunk of state.pcmChunkBuffer) {
-                mergedPCM.set(chunk, offset);
-                offset += chunk.length;
-            }
-
-            // 清空緩衝區
+        async function deepChunk() {
+            if (!state.pcmChunkBuffer.length) return;
+            const key = document.getElementById('apiKey').value.trim();
+            const n = state.pcmChunkBuffer.reduce((z, a) => z + a.length, 0);
+            const merged = new Int16Array(n);
+            let o = 0;
+            for (const c of state.pcmChunkBuffer) { merged.set(c, o); o += c.length; }
             state.pcmChunkBuffer = [];
 
-            // 建立 WAV 檔案
-            const wavBlob = createWavBlob(mergedPCM, 16000);
+            log('傳送第二軌切片…', 'info');
+            const bar = document.getElementById('progressBar');
+            bar.className = 'progress-bar sending';
 
-            // 轉換為 base64
+            const wav = createWavBlob(merged, 16000);
             const reader = new FileReader();
             reader.onload = async () => {
-                const base64Audio = reader.result.split(',')[1];
-
+                const b64 = reader.result.split(',')[1];
+                const model = document.getElementById('track2Model').value;
+                const lang = languageMap[state.targetLanguage];
                 try {
-                    const response = await fetch(
-                        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-                        {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json'
-                            },
-                            body: JSON.stringify({
-                                contents: [{
-                                    parts: [{
-                                        inlineData: {
-                                            mimeType: 'audio/wav',
-                                            data: base64Audio
-                                        }
-                                    }]
-                                }],
-                                generationConfig: {
-                                    temperature: 0.3,
-                                    maxOutputTokens: 2048
-                                },
-                                systemInstruction: {
-                                    parts: [{
-                                        text: `你是一個專業的語音轉文字與翻譯系統。請完成以下任務：
-1. 將音訊中的所有語音轉寫並翻譯成${targetLang}
-2. 輸出格式：原文 (目標語言翻譯)
-3. 針對廣播資訊、關鍵決策、數字或待辦事項進行 1~3 點精煉條列
-4. 不要輸出任何問候語或解釋，直接給出結果
-
-請用 JSON 格式回覆：
-{
-  "transcript": "完整的雙語對照文字",
-  "summary": ["重點 1", "重點 2", "重點 3"]
-}`
-                                    }]
-                                }
-                            })
-                        }
-                    );
-
-                    if (!response.ok) {
-                        const errorText = await response.text();
-                        throw new Error(`HTTP ${response.status}: ${errorText}`);
-                    }
-
-                    const data = await response.json();
-                    
-                    if (data.candidates && data.candidates[0] && data.candidates[0].content) {
-                        const text = data.candidates[0].content.parts[0].text;
-                        
-                        // 嘗試解析 JSON
-                        let parsed;
-                        try {
-                            const jsonMatch = text.match(/\{[\s\S]*\}/);
-                            if (jsonMatch) {
-                                parsed = JSON.parse(jsonMatch[0]);
-                            }
-                        } catch (e) {
-                            parsed = { transcript: text, summary: [] };
-                        }
-
-                        addTrack2Transcript(parsed.transcript || text, parsed.summary || [], state.targetLanguage);
-                        log('第二軌切片處理完成', 'info');
-                    }
-
-                } catch (error) {
-                    log(`第二軌 API 呼叫失敗：${error.message}`, 'error');
+                    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            contents: [{ parts: [{ inlineData: { mimeType: 'audio/wav', data: b64 } }, { text: `轉寫並翻譯成${lang}。格式「原文 (翻譯)」，最後 1-3 點摘要。` }] }],
+                            generationConfig: { temperature: 0.2, maxOutputTokens: 2048 }
+                        })
+                    });
+                    if (!r.ok) throw new Error(`HTTP ${r.status} ${await r.text()}`);
+                    const j = await r.json();
+                    const text = j.candidates?.[0]?.content?.parts?.map(x => x.text).join('') || '無回應';
+                    addTrack2Item(text);
+                    log('第二軌完成', 'success');
+                } catch (e) {
+                    log(`第二軌錯誤：${e.message}`, 'error');
+                } finally {
+                    setTimeout(() => { bar.className = 'progress-bar'; }, 500);
                 }
             };
-            reader.onerror = () => {
-                log('第二軌：FileReader 讀取失敗', 'error');
-            };
-            reader.readAsDataURL(wavBlob);
+            reader.readAsDataURL(wav);
         }
 
-        function addTrack2Transcript(transcript, summary, targetLang) {
-            const timestamp = new Date().toLocaleTimeString('zh-TW', { hour12: false });
-            const item = {
-                timestamp,
-                transcript,
-                summary,
-                targetLang
-            };
-            state.track2Transcripts.push(item);
-
-            const contentDiv = document.getElementById('track2Content');
-            
-            // 清除初始提示
-            if (contentDiv.querySelector('div[style*="text-align: center"]')) {
-                contentDiv.innerHTML = '';
-            }
-
-            const transcriptDiv = document.createElement('div');
-            transcriptDiv.className = 'transcript-item track2';
-            
-            let summaryHTML = '';
-            if (summary && summary.length > 0) {
-                summaryHTML = `
-                    <div class="summary-points">
-                        <strong>📌 重點摘要：</strong>
-                        <ul style="margin: 4px 0 0 20px; padding: 0;">
-                            ${summary.map(point => `<li>${point}</li>`).join('')}
-                        </ul>
-                    </div>
-                `;
-            }
-
-            transcriptDiv.innerHTML = `
-                <div class="transcript-original">${transcript}</div>
-                <div class="transcript-translation">[${timestamp}] 切片完成 • ${targetLang}</div>
-                ${summaryHTML}
-            `;
-
-            contentDiv.appendChild(transcriptDiv);
-            contentDiv.scrollTop = contentDiv.scrollHeight;
+        function addTrack1Item(text) {
+            const out = document.getElementById('track1Content');
+            if (out.textContent.includes('尚未')) out.innerHTML = '';
+            const t = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+            const d = document.createElement('div');
+            d.className = 'transcript-item';
+            d.innerHTML = `<div>${escapeHTML(text)}</div><div class="meta">[${t}]</div>`;
+            out.appendChild(d);
+            out.scrollTop = out.scrollHeight;
+            state.track1Transcripts.push({ t, text });
         }
 
-        function startChunkTimer() {
+        function addTrack2Item(text) {
+            const out = document.getElementById('track2Content');
+            if (out.textContent.includes('等待')) out.innerHTML = '';
+            const t = new Date().toLocaleTimeString('zh-TW', { hour12: false });
+            const d = document.createElement('div');
+            d.className = 'transcript-item track2';
+            d.innerHTML = `<div>${escapeHTML(text)}</div><div class="meta">[${t}] 切片</div>`;
+            out.appendChild(d);
+            out.scrollTop = out.scrollHeight;
+            state.track2Transcripts.push({ t, text });
+        }
+
+        function escapeHTML(s) {
+            const d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        function startTimer() {
             state.chunkStartTime = Date.now();
-            const chunkDuration = parseInt(document.getElementById('chunkDuration').value) * 1000;
-            document.getElementById('chunkDurationDisplay').textContent = chunkDuration / 1000;
-
-            const progressBar = document.getElementById('progressBar');
-            const progressText = document.getElementById('progressText');
+            const dur = parseInt(document.getElementById('chunkDuration').value) * 1000;
+            document.getElementById('chunkDurationDisplay').textContent = dur / 1000;
+            document.getElementById('chunkProgress').style.display = 'block';
 
             state.chunkTimer = setInterval(() => {
-                const elapsed = Date.now() - state.chunkStartTime;
-                const remaining = Math.max(0, chunkDuration - elapsed);
-                const progress = (elapsed / chunkDuration) * 100;
+                const e = Date.now() - state.chunkStartTime;
+                const rem = Math.max(0, dur - e);
+                const p = Math.min(100, e / dur * 100);
+                document.getElementById('progressBar').style.width = p + '%';
+                document.getElementById('progressText').textContent = `倒數：${(rem / 1000).toFixed(1)} 秒`;
 
-                progressBar.style.width = `${Math.min(100, progress)}%`;
-                progressText.textContent = `倒數：${(remaining / 1000).toFixed(1)} 秒`;
-
-                if (remaining <= 0) {
-                    processChunk();
+                if (rem <= 0) {
+                    deepChunk();
                     state.chunkStartTime = Date.now();
                 }
             }, 100);
-
-            document.getElementById('chunkProgress').style.display = 'block';
         }
 
-        function stopChunkTimer() {
-            if (state.chunkTimer) {
-                clearInterval(state.chunkTimer);
-                state.chunkTimer = null;
-            }
-            document.getElementById('chunkProgress').style.display = 'none';
-        }
-
-        // ==================== 音訊處理 ====================
-        async function startAudioCapture() {
-            const constraints = {
-                audio: {
-                    echoCancellation: false,
-                    noiseSuppression: false,
-                    autoGainControl: false,
-                    channelCount: 1,
-                    sampleRate: 16000
-                },
-                video: false
-            };
-
+        async function start() {
             try {
-                state.mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
-                log('麥克風存取已授權', 'info');
-
-                state.audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                    sampleRate: 16000
+                saveSettings();
+                state.audioContext = new (window.AudioContext || webkitAudioContext)({ sampleRate: 16000 });
+                await state.audioContext.resume();
+                state.mediaStream = await navigator.mediaDevices.getUserMedia({
+                    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1, sampleRate: 16000 }
                 });
-
-                // iOS Safari 防護
-                if (state.audioContext.state === 'suspended') {
-                    await state.audioContext.resume();
-                    log('AudioContext 已恢復', 'info');
-                }
-
-                const source = state.audioContext.createMediaStreamSource(state.mediaStream);
-
-                // 使用 ScriptProcessorNode
+                const src = state.audioContext.createMediaStreamSource(state.mediaStream);
                 state.scriptProcessor = state.audioContext.createScriptProcessor(4096, 1, 1);
-                source.connect(state.scriptProcessor);
+                src.connect(state.scriptProcessor);
                 state.scriptProcessor.connect(state.audioContext.destination);
-
-                state.scriptProcessor.onaudioprocess = (event) => {
-                    const inputBuffer = event.inputBuffer;
-                    const inputData = inputBuffer.getChannelData(0);
-                    const pcmData = float32ToInt16PCM(inputData);
-
-                    // 第一軌：即時傳送
-                    sendAudioChunk(new Uint8Array(pcmData.buffer));
-
-                    // 第二軌：累積到緩衝區
-                    state.pcmChunkBuffer.push(pcmData);
+                state.scriptProcessor.onaudioprocess = e => {
+                    const a = float32ToInt16PCM(e.inputBuffer.getChannelData(0));
+                    state.pcmChunkBuffer.push(a);
+                    sendLive(new Uint8Array(a.buffer));
                 };
-
-                log(`AudioContext 取樣率：${state.audioContext.sampleRate}Hz`, 'info');
-                document.getElementById('track2Status').className = 'status-indicator active';
-
-            } catch (error) {
-                log(`音訊初始化失敗：${error.message}`, 'error');
-                throw error;
-            }
-        }
-
-        // ==================== 螢幕喚醒鎖 ====================
-        async function requestWakeLock() {
-            if ('wakeLock' in navigator) {
-                try {
-                    state.wakeLock = await navigator.wakeLock.request('screen');
-                    log('螢幕喚醒鎖已啟用', 'info');
-                    
-                    state.wakeLock.addEventListener('release', () => {
-                        log('螢幕喚醒鎖已釋放', 'warning');
-                    });
-                } catch (error) {
-                    log(`喚醒鎖請求失敗：${error.message}`, 'warning');
-                }
-            }
-        }
-
-        async function releaseWakeLock() {
-            if (state.wakeLock) {
-                await state.wakeLock.release();
-                state.wakeLock = null;
-            }
-        }
-
-        // ==================== 匯出功能 ====================
-        function exportTranscripts() {
-            const targetLang = languageMap[state.targetLanguage];
-            let content = `# Gemini 雙軌即時同傳記錄\n\n`;
-            content += `**目標語言：** ${targetLang}\n`;
-            content += `**匯出時間：** ${new Date().toLocaleString('zh-TW')}\n\n`;
-
-            // 第一軌記錄
-            content += `## 第一軌：即時同傳\n\n`;
-            if (state.track1Transcripts.length === 0) {
-                content += `*(無記錄)*\n\n`;
-            } else {
-                for (const item of state.track1Transcripts) {
-                    content += `**[${item.timestamp}]** ${item.text}\n\n`;
-                }
-            }
-
-            // 第二軌記錄
-            content += `## 第二軌：時間軸精翻卡片\n\n`;
-            if (state.track2Transcripts.length === 0) {
-                content += `*(無記錄)*\n\n`;
-            } else {
-                for (const item of state.track2Transcripts) {
-                    content += `**[${item.timestamp}]**\n\n`;
-                    content += `${item.transcript}\n\n`;
-                    if (item.summary && item.summary.length > 0) {
-                        content += `**重點摘要：**\n`;
-                        for (const point of item.summary) {
-                            content += `- ${point}\n`;
-                        }
-                        content += `\n`;
-                    }
-                }
-            }
-
-            // 建立下載
-            const blob = new Blob([content], { type: 'text/markdown' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `gemini-transcript-${Date.now()}.md`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            log('記錄已匯出為 Markdown 檔案', 'info');
-        }
-
-        // ==================== 啟動/停止控制 (合併為同一按鈕) ====================
-        async function toggleRecording() {
-            if (state.isRecording) {
-                await stopRecording();
-            } else {
-                await startRecording();
-            }
-        }
-
-        async function startRecording() {
-            const apiKey = document.getElementById('apiKey').value.trim();
-            if (!apiKey) {
-                alert('請先輸入 API Key');
-                return;
-            }
-
-            // 儲存設定
-            saveSettings();
-
-            try {
-                log('開始啟動收音...', 'info');
-                
-                // 啟動音訊捕捉
-                await startAudioCapture();
-                
-                // 啟動第一軌 WebSocket (等待 setupComplete)
+                log(`AudioContext: ${state.audioContext.sampleRate}Hz`, 'info');
                 await startTrack1();
-                
-                // 啟動第二軌計時器
-                startChunkTimer();
-                
-                // 請求喚醒鎖
-                await requestWakeLock();
-
+                startTimer();
+                if (navigator.wakeLock) state.wakeLock = await navigator.wakeLock.request('screen');
                 state.isRecording = true;
-                
-                // 更新 UI
-                updateToggleButton(true);
+                document.getElementById('btnStart').disabled = true;
+                document.getElementById('btnStop').disabled = false;
                 document.getElementById('btnExport').disabled = false;
-                document.getElementById('btnExportSettings').disabled = false;
-
                 log('✅ 收音已啟動', 'success');
-
-            } catch (error) {
-                log(`啟動失敗：${error.message}`, 'error');
-                
-                // 如果是致命錯誤，顯示明確提示
-                if (state.isFatalError) {
-                    alert(`模型錯誤：${error.message}\n\n請在設定中選擇正確的模型：\n- Gemini 3.5 Transcribe Live (即時逐字稿)\n- Gemini 3.5 Live Translate (語音對語音)`);
-                } else {
-                    alert(`啟動失敗：${error.message}\n\n請確認：\n1. 已授予麥克風權限\n2. 使用 HTTPS 或 localhost\n3. API Key 正確\n4. 模型名稱正確`);
-                }
-                
-                // 清理
-                await stopRecording();
+            } catch (e) {
+                log(`啟動失敗：${e.message}`, 'error');
+                if (state.isFatalError) alert(`模型錯誤：${e.message}`);
+                else alert(`啟動失敗：${e.message}`);
+                stop();
             }
         }
 
-        async function stopRecording() {
-            log('停止收音...', 'info');
-
-            // 沖刷殘留音訊
-            if (state.pcmChunkBuffer.length > 0) {
-                const totalLength = state.pcmChunkBuffer.reduce((acc, chunk) => acc + chunk.length, 0);
-                const duration = totalLength / 16000; // 秒
-                if (duration > 0.5) {
-                    log(`沖刷殘留音訊：${duration.toFixed(2)}秒`, 'info');
-                    await processChunk();
-                }
-            }
-
-            // 停止計時器
-            stopChunkTimer();
-
-            // 關閉 WebSocket
-            if (state.webSocket) {
-                state.webSocket.close();
-                state.webSocket = null;
-            }
-
-            // 停止音訊流
-            if (state.scriptProcessor) {
-                state.scriptProcessor.disconnect();
-                state.scriptProcessor = null;
-            }
-
-            if (state.mediaStream) {
-                state.mediaStream.getTracks().forEach(track => track.stop());
-                state.mediaStream = null;
-            }
-
-            if (state.audioContext) {
-                state.audioContext.close();
-                state.audioContext = null;
-            }
-
-            // 釋放喚醒鎖
-            await releaseWakeLock();
-
-            state.isRecording = false;
-            state.isSetupComplete = false;
-            state.isWaitingForSetupResponse = false;
-            state.isFatalError = false;
-            state.pcmChunkBuffer = [];
-            state.audioQueue = [];
-
-            // 更新 UI
-            updateToggleButton(false);
+        async function stop() {
+            if (state.pcmChunkBuffer.reduce((z, a) => z + a.length, 0) / 16000 > 0.5) await deepChunk();
+            clearInterval(state.chunkTimer);
+            document.getElementById('chunkProgress').style.display = 'none';
+            if (state.webSocket) state.webSocket.close();
+            if (state.scriptProcessor) state.scriptProcessor.disconnect();
+            if (state.mediaStream) state.mediaStream.getTracks().forEach(t => t.stop());
+            if (state.audioContext) await state.audioContext.close();
+            if (state.wakeLock) await state.wakeLock.release();
+            Object.assign(state, { isRecording: false, isSetupComplete: false, audioContext: null, mediaStream: null, scriptProcessor: null, webSocket: null, pcmChunkBuffer: [], audioQueue: [] });
+            document.getElementById('btnStart').disabled = false;
+            document.getElementById('btnStop').disabled = true;
             document.getElementById('btnExport').disabled = true;
-            document.getElementById('btnExportSettings').disabled = true;
             document.getElementById('track1Status').className = 'status-indicator';
-            document.getElementById('track2Status').className = 'status-indicator';
-
             log('收音已停止', 'info');
         }
 
-        function updateToggleButton(isRecording) {
-            const btn = document.getElementById('btnToggle');
-            const text = document.getElementById('btnToggleText');
-            
-            if (isRecording) {
-                btn.className = 'btn-stop';
-                btn.innerHTML = '<span>⏹️</span> <span id="btnToggleText">停止收音</span>';
-            } else {
-                btn.className = 'btn-start';
-                btn.innerHTML = '<span>🎤</span> <span id="btnToggleText">啟動收音</span>';
-            }
+        function exportRec() {
+            const lang = languageMap[state.targetLanguage];
+            let c = `# Gemini 雙軌記錄\n\n**語言：** ${lang}\n**時間：** ${new Date().toLocaleString('zh-TW')}\n\n`;
+            c += `## 第一軌\n\n` + (state.track1Transcripts.length ? state.track1Transcripts.map(x => `[${x.t}] ${x.text}`).join('\n\n') : '無');
+            c += `\n\n## 第二軌\n\n` + (state.track2Transcripts.length ? state.track2Transcripts.map(x => `[${x.t}] ${x.text}`).join('\n\n') : '無');
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([c], { type: 'text/markdown' }));
+            a.download = `gemini-${Date.now()}.md`;
+            a.click();
+            URL.revokeObjectURL(a.href);
+            log('已匯出', 'info');
         }
 
-        // ==================== 事件監聽 ====================
-        document.getElementById('btnToggle').addEventListener('click', toggleRecording);
-        document.getElementById('btnExport').addEventListener('click', exportTranscripts);
-        document.getElementById('btnExportSettings').addEventListener('click', exportTranscripts);
-        document.getElementById('btnCopyLog').addEventListener('click', copyLog);
+        document.getElementById('btnStart').onclick = start;
+        document.getElementById('btnStop').onclick = stop;
+        document.getElementById('btnExport').onclick = exportRec;
+        document.getElementById('btnCopyLog').onclick = copyLog;
 
-        // 字級調整
-        document.getElementById('fontSize').addEventListener('input', (e) => {
-            const value = e.target.value;
-            document.getElementById('fontSizeValue').textContent = value;
-            document.documentElement.style.setProperty('--content-font-size', `${value}px`);
+        ['targetLanguage', 'track1Model', 'track2Model', 'chunkDuration', 'apiKey'].forEach(id => {
+            document.getElementById(id).addEventListener('change', saveSettings);
         });
+        document.getElementById('fontSize').oninput = () => { applyUI(); saveSettings(); };
+        document.getElementById('layoutRatio').oninput = () => { applyUI(); saveSettings(); };
 
-        // 版面比例調整
-        document.getElementById('layoutRatio').addEventListener('input', (e) => {
-            const value = parseInt(e.target.value);
-            const track1Pct = value;
-            const track2Pct = 100 - value;
-            document.documentElement.style.setProperty('--track1-height', `${track1Pct}%`);
-            document.documentElement.style.setProperty('--track2-height', `${track2Pct}%`);
-        });
-
-        // 目標語言變更
-        document.getElementById('targetLanguage').addEventListener('change', (e) => {
-            state.targetLanguage = e.target.value;
-            log(`目標語言已變更為：${languageMap[state.targetLanguage]}`, 'info');
-            saveSettings();
-        });
-
-        // 切片週期變更
-        document.getElementById('chunkDuration').addEventListener('change', (e) => {
-            const value = parseInt(e.target.value);
-            state.chunkDuration = value * 1000;
-            document.getElementById('chunkDurationDisplay').textContent = value;
-            log(`切片週期已變更為：${value}秒`, 'info');
-            saveSettings();
-            
-            // 如果正在錄音，重新啟動計時器
-            if (state.isRecording) {
-                stopChunkTimer();
-                startChunkTimer();
-            }
-        });
-
-        // 模型變更日誌
-        document.getElementById('track1Model').addEventListener('change', (e) => {
-            log(`第一軌模型已變更為：${e.target.value}`, 'info');
-            saveSettings();
-        });
-
-        document.getElementById('track2Model').addEventListener('change', (e) => {
-            log(`第二軌模型已變更為：${e.target.value}`, 'info');
-            saveSettings();
-        });
-
-        // API Key 變更時自動儲存
-        document.getElementById('apiKey').addEventListener('change', saveSettings);
-
-        // 頁面卸載時清理
-        window.addEventListener('beforeunload', async () => {
-            if (state.isRecording) {
-                await stopRecording();
-            }
-            await releaseWakeLock();
-        });
-
-        // ==================== 初始化 ====================
-        window.addEventListener('DOMContentLoaded', () => {
-            loadSettings();
-            log('系統就緒', 'info');
-            log('設定已從 LocalStorage 載入 (如有)', 'info');
-            log('請確認 API Key 後點擊「啟動收音」', 'info');
-        });
+        loadSettings();
+        log('系統就緒', 'info');
     </script>
 </body>
 </html>
