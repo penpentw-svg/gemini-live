@@ -99,6 +99,7 @@
       margin-top: 6px;
       font-family: monospace;
       white-space: pre-wrap;
+      word-break: break-all;
     }
 
     /* 雙軌容器 - 動態比例調整 */
@@ -176,15 +177,25 @@
           </select>
         </div>
 
-        <!-- 第二層模型選擇 -->
+        <!-- 第一層 Live 模型 -->
+        <div class="config-group">
+          <label for="liveModelSelect">第一層 Live 模型：</label>
+          <select id="liveModelSelect">
+            <option value="auto" selected>⚡ 自動偵測可用模型 (推薦)</option>
+            <option value="models/gemini-2.0-flash">models/gemini-2.0-flash</option>
+            <option value="models/gemini-2.0-flash-realtime-exp">models/gemini-2.0-flash-realtime-exp</option>
+            <option value="models/gemini-2.5-flash">models/gemini-2.5-flash</option>
+          </select>
+        </div>
+
+        <!-- 第二層精翻模型 -->
         <div class="config-group">
           <label for="modelSelect">第二層精翻模型：</label>
           <select id="modelSelect">
             <option value="gemini-2.5-flash" selected>Gemini 2.5 Flash (推薦)</option>
-            <option value="gemini-2.5-pro">Gemini 2.5 Pro (深層解析)</option>
+            <option value="gemini-2.5-pro">Gemini 2.5 Pro (深度分析)</option>
             <option value="gemini-2.0-flash">Gemini 2.0 Flash</option>
             <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-            <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
           </select>
         </div>
 
@@ -220,7 +231,7 @@
         <!-- API KEY -->
         <div class="config-group full-width">
           <label for="apiKey">Gemini API Key：</label>
-          <input type="password" id="apiKey" placeholder="若程式內未寫死，請在此貼上 Key" />
+          <input type="password" id="apiKey" placeholder="若程式內未寫死，請貼上 Key" />
         </div>
       </div>
     </details>
@@ -238,7 +249,7 @@
     <div class="panel" id="panelLive">
       <div class="panel-header">
         <span>第一層：即時同傳 (原文 + 括號翻譯)</span>
-        <span class="tag tag-live">Live WS</span>
+        <span class="tag tag-live" id="liveModelTag">Live WS</span>
       </div>
       <div class="content-box" id="liveOutput">等待語音輸入...（說完一句話稍微停頓約 1 秒即可送出）</div>
     </div>
@@ -254,13 +265,11 @@
   </div>
 
   <script>
-    // ========================================================
-    // 若要固定 Key 免重複輸入，可直接在此填入（GitHub 請確保設為 Private 倉庫）
-    // ========================================================
+    // 若要固定 Key 免重複輸入，可直接在此填入
     const HARDCODED_API_KEY = ""; 
 
     let isRunning = false;
-    let isSetupComplete = false; // 關鍵：握手狀態鎖定開關
+    let isSetupComplete = false;
     let audioContext = null;
     let micStream = null;
     let scriptProcessor = null;
@@ -272,6 +281,7 @@
 
     const apiKeyInput = document.getElementById('apiKey');
     const targetLangSelect = document.getElementById('targetLanguage');
+    const liveModelSelect = document.getElementById('liveModelSelect');
     const modelSelect = document.getElementById('modelSelect');
     const chunkDurationSelect = document.getElementById('chunkDurationSelect');
     const btnToggle = document.getElementById('btn-toggle');
@@ -282,6 +292,7 @@
     const debugLog = document.getElementById('debugLog');
     const deepPanelTitle = document.getElementById('deepPanelTitle');
     const deepModelTag = document.getElementById('deepModelTag');
+    const liveModelTag = document.getElementById('liveModelTag');
 
     const panelLive = document.getElementById('panelLive');
     const panelDeep = document.getElementById('panelDeep');
@@ -299,14 +310,14 @@
     else if (localStorage.getItem('gemini_key')) apiKeyInput.value = localStorage.getItem('gemini_key');
     apiKeyInput.addEventListener('change', () => localStorage.setItem('gemini_key', apiKeyInput.value.trim()));
 
-    // 字級大小調整
+    // 字級調整
     fontSizeRange.addEventListener('input', (e) => {
       const size = e.target.value;
       fontSizeVal.textContent = `${size}px`;
       document.documentElement.style.setProperty('--content-font-size', `${size}px`);
     });
 
-    // 視窗比例調整
+    // 視窗比例
     ratioRange.addEventListener('input', (e) => {
       const liveRatio = parseInt(e.target.value, 10);
       const deepRatio = 100 - liveRatio;
@@ -315,10 +326,8 @@
       ratioVal.textContent = `${Math.round(liveRatio/10)}:${Math.round(deepRatio/10)}`;
     });
 
-    // 模型標籤更新
-    modelSelect.addEventListener('change', () => {
-      deepModelTag.textContent = modelSelect.value;
-    });
+    // 標籤更新
+    modelSelect.addEventListener('change', () => { deepModelTag.textContent = modelSelect.value; });
 
     // 切片時間切換
     chunkDurationSelect.addEventListener('change', () => {
@@ -327,6 +336,37 @@
       chunkTimer.textContent = `切片倒數：${timeLeft}s`;
       deepPanelTitle.textContent = `第二層：${chunkDuration} 秒硬切精翻`;
     });
+
+    // 自動偵測或解析可用的 Live 模型
+    async function resolveLiveModel(apiKey) {
+      const userChoice = liveModelSelect.value;
+      if (userChoice !== 'auto') {
+        return userChoice;
+      }
+
+      log('正在自動查詢支援 Live (bidiGenerateContent) 的模型清單...');
+      try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1alpha/models?key=${apiKey}`);
+        if (res.ok) {
+          const data = await res.json();
+          // 找出明確支援 bidiGenerateContent 的模型
+          const validModel = data.models?.find(m => 
+            Array.isArray(m.supportedGenerationMethods) && 
+            m.supportedGenerationMethods.includes('bidiGenerateContent')
+          );
+          if (validModel) {
+            log(`自動匹配到 Live 模型: ${validModel.name}`);
+            return validModel.name;
+          }
+        }
+      } catch (err) {
+        log(`查詢模型清單警告: ${err.message}`);
+      }
+
+      // 預設備選標準名稱
+      log('使用備用標準模型: models/gemini-2.0-flash');
+      return "models/gemini-2.0-flash";
+    }
 
     btnToggle.addEventListener('click', async () => {
       if (!isRunning) {
@@ -358,14 +398,18 @@
       isSetupComplete = false;
       const targetLang = targetLangSelect.value;
 
-      // 喚醒 iOS AudioContext
+      // 喚醒 iOS Web Audio
       audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       if (audioContext.state === 'suspended') {
         await audioContext.resume();
       }
-      log(`AudioContext 已喚醒 (16kHz)`);
+      log(`AudioContext 取樣率: ${audioContext.sampleRate}Hz`);
 
-      // 關閉系統降噪以收錄環境音與廣播
+      // 取得可用 Live 模型
+      const liveModelName = await resolveLiveModel(apiKey);
+      liveModelTag.textContent = liveModelName.replace('models/', '');
+
+      // 關閉降噪以收錄環境聲音與廣播
       micStream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: false,
@@ -377,7 +421,7 @@
       });
 
       // 啟動第一軌 WebSocket
-      initGeminiLiveWebSocket(apiKey, targetLang);
+      initGeminiLiveWebSocket(apiKey, targetLang, liveModelName);
 
       // Web Audio 分流管線
       const source = audioContext.createMediaStreamSource(micStream);
@@ -395,7 +439,7 @@
           pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
 
-        // 核心修復：只有在握手完成 (isSetupComplete = true) 後才允許發送音訊封包
+        // 必須等伺服器回傳 setupComplete 才能傳送音訊
         if (liveSocket && liveSocket.readyState === WebSocket.OPEN && isSetupComplete) {
           const base64Audio = int16ToBase64(pcm16);
           liveSocket.send(JSON.stringify({
@@ -405,7 +449,7 @@
           }));
         }
 
-        // 第二軌緩衝池持續累積
+        // 第二軌緩衝池
         pcmChunkBuffer.push(pcm16);
       };
 
@@ -413,19 +457,19 @@
     }
 
     // 第一軌：WebSocket 即時同傳（格式：原文 (翻譯)）
-    function initGeminiLiveWebSocket(apiKey, targetLang) {
-      log('第一軌連線中...');
+    function initGeminiLiveWebSocket(apiKey, targetLang, liveModelName) {
+      log(`連線中: ${liveModelName}...`);
       isSetupComplete = false;
       const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${apiKey}`;
       liveSocket = new WebSocket(wsUrl);
 
       liveSocket.onopen = () => {
-        log('第一軌連線成功，發送握手 Setup...');
+        log(`WebSocket 建立成功，發送 Setup (${liveModelName})...`);
         liveStatus.textContent = '第一軌：協商中...';
         
         liveSocket.send(JSON.stringify({
           setup: {
-            model: "models/gemini-2.0-flash-exp",
+            model: liveModelName,
             generationConfig: { 
               responseModalities: ["TEXT"] 
             },
@@ -447,7 +491,7 @@
           // 握手確認
           if (res.setupComplete) {
             isSetupComplete = true;
-            log('第一軌握手完成 (setupComplete)！音訊開始串流。');
+            log('握手成功 (setupComplete)！音訊正常傳輸中。');
             liveStatus.textContent = '第一軌：即時同傳中';
             return;
           }
@@ -467,7 +511,7 @@
         }
       };
 
-      liveSocket.onerror = () => { log('第一軌連線發生錯誤'); };
+      liveSocket.onerror = () => { log('第一軌連線異常'); };
       liveSocket.onclose = (e) => {
         isSetupComplete = false;
         log(`第一軌關閉 (代碼: ${e.code}, 原因: ${e.reason || '無'})`);
@@ -575,7 +619,7 @@
       view.setUint16(20, 1, true);
       view.setUint16(22, 1, true);
       view.setUint32(24, sampleRate, true);
-      view.setUint32(28, sampleRate * 2, true);
+      view.setUint28(28, sampleRate * 2, true);
       view.setUint16(32, 2, true);
       view.setUint16(34, 16, true);
       writeString(view, 36, 'data');
