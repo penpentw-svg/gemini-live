@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#111827">
-<title>Gemini 雙軌即時同傳 v3.1.18「雙子座」</title>
+<title>雙子座同聲傳譯 v3.1.19</title>
 <style>
 :root{--bg:#0b1020;--panel:#121a2b;--panel2:#182235;--text:#eef2ff;--muted:#9aa7bd;--line:#2a3750;--accent:#60a5fa;--danger:#ef4444;--warn:#f59e0b;--ok:#34d399;--radius:14px}
 *{box-sizing:border-box}
@@ -25,8 +25,9 @@ h1{font-size:20px;margin:0}
 .controls{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:7px;margin-bottom:10px}
 .controls button{min-width:0;padding:9px 5px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:4px;white-space:nowrap}
 .controls button span{overflow:hidden;text-overflow:ellipsis}
-details.settings{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:10px}
-details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
+.settings{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);margin-bottom:10px}
+.settings[hidden]{display:none}
+.settings .settings-title{padding:12px 14px;font-weight:600;border-bottom:1px solid var(--line)}
 .settings-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:0 14px 14px}
 .field{display:flex;flex-direction:column;gap:5px}
 .field label{font-size:12px;color:var(--muted)}
@@ -68,8 +69,8 @@ details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
 <div class="container">
 <header>
   <div>
-    <h1>Gemini 雙軌即時同傳</h1>
-    <div class="version">Version 3.1.18「雙子座」 · Single HTML · Gemini API v1beta</div>
+    <h1>雙子座同聲傳譯</h1>
+    <div class="version">Version 3.1.19 · Single HTML · Gemini API v1beta</div>
   </div>
   <div class="status"><span id="statusDot" class="dot"></span><span id="statusText">待機</span></div>
 </header>
@@ -82,8 +83,8 @@ details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
   <button id="settingsBtn" title="開啟設定">⚙<span>設定</span></button>
 </div>
 
-<details class="settings" id="settings">
-  <summary>⚙ 設定</summary>
+<div class="settings" id="settings" hidden>
+  <div class="settings-title">⚙ 設定</div>
   <div class="settings-grid">
     <div class="field">
       <label>目標語言</label>
@@ -96,11 +97,17 @@ details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
     </div>
     <div class="field">
       <label>第一軌模型</label>
-      <input id="track1Model" value="gemini-3.5-transcribe-live">
+      <select id="track1Model">
+        <option value="gemini-3.5-live-translate-preview">gemini-3.5-live-translate-preview（即時翻譯）</option>
+        <option value="gemini-3.5-transcribe-live">gemini-3.5-transcribe-live（語音辨識）</option>
+      </select>
     </div>
     <div class="field">
       <label>第二軌模型</label>
-      <input id="track2Model" value="gemini-2.5-flash">
+      <select id="track2Model">
+        <option value="gemini-3.6-flash">gemini-3.6-flash（最新）</option>
+        <option value="gemini-2.5-flash">gemini-2.5-flash</option>
+      </select>
     </div>
     <div class="field">
       <label>第二軌切片（秒）</label>
@@ -127,7 +134,7 @@ details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
       </div>
     </div>
   </div>
-</details>
+</div>
 
 <div class="workspace" id="workspace">
   <section class="track" id="track1">
@@ -151,7 +158,7 @@ details.settings summary{padding:12px 14px;cursor:pointer;font-weight:600}
 </div>
 
 <div class="footer">
-  v3.1.18「雙子座」：第一軌改用 gemini-3.5-live-translate-preview 模型（即時語音翻譯→繁體中文），同時顯示原文與翻譯；第二軌改用 gemini-3.6-flash 模型，prompt 改為要求同時回傳原文和翻譯並用【原文】【翻譯】格式分隔；模型改為下拉選單選擇；音訊改為 100ms 固定分塊送出並提高 VAD 靈敏度；重採樣新增抗鋸齒低通濾波；修正停止時第二軌佇列未等待完成就提前結束的競態問題；設定面板與上方「設定」按鈕合併為單一開關；雙軌共用同一份 16 kHz / Mono / PCM16 原始音訊。
+  v3.1.19「雙子座」：第一軌同時顯示原文與繁體中文翻譯；第二軌以 JSON 同時回傳原文與翻譯；按停止後會顯示上傳／等待狀態，直到所有剩餘切片完成才真正停止。
 </div>
 </div>
 
@@ -184,7 +191,9 @@ let settings = {
 };
 
 let audioContext = null, mediaStream = null, sourceNode = null, processor = null;
-let liveSendBuf = new Int16Array(0), liveSendTarget = 1600;
+let liveSendBuf=new Int16Array(0),liveSendTarget=1600;
+let firstOriginal='',firstTranslation='';
+let stopStartedAt=0,stopProgressTimer=null,secondInFlight=null;
 let ws = null, wsReady = false, wsSetupTimer = null;
 let running = false, wakeLock = null, startAt = 0, chunkStartedAt = 0;
 let chunkParts = [], chunkSamples = 0, chunkTimer = null, progressTimer = null;
@@ -253,24 +262,24 @@ function bindSettings(){
 }
 
 function toggleSettings(){
-  $('settings').open = !$('settings').open;
+  $('settings').hidden = !$('settings').hidden;
 }
 function requireKey(){
   if(!els.api.value.trim()){
     alert('請先在「設定」輸入 Gemini API Key。');
-    $('settings').open=true;
+    $('settings').hidden=false;
     els.api.focus();
     return false;
   }
   return true;
 }
 
-function eventToText(data){
-  if(typeof data==='string') return Promise.resolve(data);
-  if(data instanceof Blob) return data.text();
-  if(data instanceof ArrayBuffer) return Promise.resolve(new TextDecoder().decode(data));
-  if(ArrayBuffer.isView(data)) return Promise.resolve(new TextDecoder().decode(data.buffer));
-  return Promise.resolve('');
+async function eventToText(data){
+  if(typeof data==='string') return data;
+  if(data instanceof Blob) return await data.text();
+  if(data instanceof ArrayBuffer) return new TextDecoder().decode(data);
+  if(ArrayBuffer.isView(data)) return new TextDecoder().decode(data.buffer);
+  return '';
 }
 
 function arrayBufferToBase64(buffer){
@@ -292,33 +301,15 @@ function floatToPCM16(float32){
   return out.buffer;
 }
 
-function lowpassFilter(input, sampleRate, cutoff){
-  const rc=1/(2*Math.PI*cutoff);
-  const dt=1/sampleRate;
-  const alpha=dt/(rc+dt);
-  const out=new Float32Array(input.length);
-  let prev=input.length?input[0]:0;
-  for(let i=0;i<input.length;i++){
-    prev=prev+alpha*(input[i]-prev);
-    out[i]=prev;
-  }
-  return out;
-}
-
-function resampleTo16k(input, inputRate){
+function resampleTo16k(input,inputRate){
   const target=16000;
   if(inputRate===target) return input;
-  const filtered=inputRate>target ? lowpassFilter(input,inputRate,target*0.45) : input;
   const ratio=inputRate/target;
-  const newLen=Math.round(filtered.length/ratio);
-  const out=new Float32Array(newLen);
-  for(let i=0;i<newLen;i++){
-    const pos=i*ratio;
-    const idx=Math.floor(pos);
-    const frac=pos-idx;
-    const a=filtered[Math.min(idx,filtered.length-1)];
-    const b=filtered[Math.min(idx+1,filtered.length-1)];
-    out[i]=a+(b-a)*frac;
+  const out=new Float32Array(Math.round(input.length/ratio));
+  for(let i=0;i<out.length;i++){
+    const start=Math.floor(i*ratio),end=Math.min(input.length,Math.max(start+1,Math.floor((i+1)*ratio)));
+    let sum=0;for(let j=start;j<end;j++)sum+=input[j];
+    out[i]=sum/(end-start);
   }
   return out;
 }
@@ -339,7 +330,8 @@ function buildWav(pcmBuffers, sampleRate=16000){
   return buffer;
 }
 
-function sendLiveAudioRaw(pcmBuffer){
+function sendLiveAudio(pcmBuffer){
+  // Keep a short pre-handshake queue so the beginning of speech is not lost.
   if(!ws || ws.readyState!==WebSocket.OPEN || !wsReady){
     if(pendingAudioQueue.length < 25) pendingAudioQueue.push(pcmBuffer.slice(0));
     return;
@@ -351,25 +343,6 @@ function sendLiveAudioRaw(pcmBuffer){
       }
     }));
   }catch(e){log('WebSocket 發送失敗：'+e.message,'ERROR');}
-}
-function sendLiveAudio(pcmBuffer){
-  const incoming=new Int16Array(pcmBuffer);
-  const merged=new Int16Array(liveSendBuf.length+incoming.length);
-  merged.set(liveSendBuf,0);
-  merged.set(incoming,liveSendBuf.length);
-  let offset=0;
-  while(merged.length-offset>=liveSendTarget){
-    const frame=merged.slice(offset,offset+liveSendTarget);
-    sendLiveAudioRaw(frame.buffer);
-    offset+=liveSendTarget;
-  }
-  liveSendBuf=merged.slice(offset);
-}
-function flushLiveSendBuf(){
-  if(liveSendBuf.length){
-    sendLiveAudioRaw(liveSendBuf.buffer);
-    liveSendBuf=new Int16Array(0);
-  }
 }
 function flushPendingAudio(){
   if(!ws || ws.readyState!==WebSocket.OPEN || !wsReady) return;
@@ -399,23 +372,12 @@ function openWebSocket(){
         model:`models/${model}`,
         generationConfig:{
           responseModalities:['TEXT'],
-          translationConfig:{
-            targetLanguageCode:'zh-TW',
-            echoTargetLanguage:false
-          }
+          translationConfig:{targetLanguageCode:'zh-TW',echoTargetLanguage:false}
         },
-        inputAudioTranscription:{
-          languageCodes:[],
-          mode:'VERBATIM'
-        },
-        realtimeInputConfig:{
-          automaticActivityDetection:{
-            startOfSpeechSensitivity:'START_SENSITIVITY_HIGH',
-            prefixPaddingMs:100,
-            endOfSpeechSensitivity:'END_SENSITIVITY_HIGH',
-            silenceDurationMs:600
-          }
-        },
+        systemInstruction:{parts:[{text:'你是即時同聲傳譯員。將聽到的語音忠實翻譯為繁體中文。'}]},
+        inputAudioTranscription:{languageCodes:[],mode:'VERBATIM'},
+        outputAudioTranscription:{languageCodes:['zh-TW'],mode:'VERBATIM'},
+        realtimeInputConfig:{automaticActivityDetection:{startOfSpeechSensitivity:'START_SENSITIVITY_HIGH',prefixPaddingMs:100,endOfSpeechSensitivity:'END_SENSITIVITY_HIGH',silenceDurationMs:600}},
         sessionResumption: resumeHandle ? {handle:resumeHandle} : {}
       }
     };
@@ -478,17 +440,22 @@ function openWebSocket(){
 
       const c=data.serverContent;
       if(c?.interimInputTranscription?.text){
-        currentInterim=c.interimInputTranscription.text;
-        lastTranscriptAt=performance.now();
-        renderTrack1();
+        firstOriginal=c.interimInputTranscription.text;currentInterim=firstOriginal;
+        lastTranscriptAt=performance.now();renderTrack1();
       }
       if(c?.inputTranscription?.text){
-        const t=c.inputTranscription.text;
-        track1Final.push({time:new Date().toISOString(),text:t});
-        currentInterim='';
-        lastTranscriptAt=performance.now();
-        renderTrack1();
-        els.export.disabled=false;
+        firstOriginal=c.inputTranscription.text;currentInterim=firstOriginal;
+        lastTranscriptAt=performance.now();renderTrack1();
+      }
+      if(c?.outputTranscription?.text){
+        firstTranslation=c.outputTranscription.text;
+        lastTranscriptAt=performance.now();renderTrack1();
+      }
+      if(c?.turnComplete||c?.generationComplete){
+        if(firstOriginal||firstTranslation){
+          track1Final.push({time:new Date().toISOString(),original:firstOriginal,translation:firstTranslation});
+          firstOriginal='';firstTranslation='';currentInterim='';renderTrack1();els.export.disabled=false;
+        }
       }
     }catch(e){log('WebSocket JSON 解析失敗：'+e.message,'WARN');}
   };
@@ -564,129 +531,77 @@ function closeWS(){
 function renderTrack1(){
   els.t1.innerHTML='';
   for(const item of track1Final){
-    const d=document.createElement('div');
-    d.className='final-line';
-    d.textContent=item.text;
-    els.t1.appendChild(d);
+    const d=document.createElement('div');d.className='final-line';
+    const o=document.createElement('span');o.style.opacity='.65';o.textContent=item.original||'';
+    const t=document.createElement('span');t.style.color='var(--accent)';t.textContent=item.translation?`（${item.translation}）`:'（翻譯等待中）';
+    d.append(o,t);els.t1.appendChild(d);
   }
   if(currentInterim){
-    const d=document.createElement('div');d.className='interim';d.textContent=currentInterim;els.t1.appendChild(d);
+    const d=document.createElement('div');d.className='interim';
+    const o=document.createElement('span');o.style.opacity='.65';o.textContent=firstOriginal||currentInterim;
+    const t=document.createElement('span');t.style.color='var(--accent)';t.textContent=firstTranslation?`（${firstTranslation}）`:'（翻譯中…）';
+    d.append(o,t);els.t1.appendChild(d);
   }
   els.t1.scrollTop=els.t1.scrollHeight;
 }
 
-async function sendSecondChunk(pcmBuffers, seconds, isFlush=false, seq=0){
-  if(!pcmBuffers.length) return;
-  const wav=buildWav(pcmBuffers,16000);
-  const b64=arrayBufferToBase64(wav);
-  const model=els.model2.value.trim();
-  const target=els.target.value;
-  const transcriptTail=track1Final.slice(-12).map(x=>x.text).join('\n');
-
-  const prompt = `你是第二層高精度日文語音翻譯引擎。這是第 ${seq} 個獨立音訊切片。
-請「直接聽取這個 WAV 音訊」重新辨識，再翻譯；不要只依賴第一層逐字稿。
-
-重要規則：
-1. 只翻譯這個音訊切片，不要重複前一個切片的內容。
-2. 音訊可能從一句話中間開始，也可能在一句話中間結束；只翻譯實際聽到的內容。
-3. 第一層逐字稿只用來交叉比對；若與原始音訊不同，以原始音訊為準。
-4. 特別注意吵雜環境造成的漏字、同音詞、數字、人名、地名與專有名詞。
-5. 目標語言：${target}。若為 zh-TW，輸出自然、準確的繁體中文。
-6. 不要自行添加原文不存在的資訊；聽不清楚就標示 [聽不清]。
-7. 不要輸出分析過程，只輸出本切片的翻譯。
-
-第一層最近逐字稿（僅供交叉比對，不是權威）：
-${transcriptTail || '(無)'}`;
-
+async function sendSecondChunk(pcmBuffers,seconds,isFlush=false,seq=0){
+  if(!pcmBuffers.length)return;
+  const wav=buildWav(pcmBuffers,16000),b64=arrayBufferToBase64(wav);
+  const model=els.model2.value.trim(),target=els.target.value;
+  const prompt=`你是高精度音訊轉錄與翻譯引擎。直接聽取提供的 WAV 音訊，辨識原始語言，再翻譯為 ${target}。只輸出有效 JSON，禁止 Markdown、分析或任何其他文字。格式必須完全是：{"original":"原始語言逐字稿","translation":"翻譯結果"}。背景音若明確可辨，請以 [背景音：描述] 加在 original 內。聽不清處標示 [聽不清]。`;
   const url=`${REST_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(els.api.value.trim())}`;
-  const body={
-    contents:[{
-      role:'user',
-      parts:[
-        {text:prompt},
-        {inlineData:{mimeType:'audio/wav',data:b64}}
-      ]
-    }],
-    generationConfig:{temperature:0.2}
-  };
-
+  const body={contents:[{role:'user',parts:[{text:prompt},{inlineData:{mimeType:'audio/wav',data:b64}}]}],generationConfig:{temperature:0.2,responseMimeType:'application/json'}};
   log(`第二軌 #${seq} 送出 ${seconds.toFixed(1)} 秒 WAV，約 ${Math.round(wav.byteLength/1024)} KB。`);
+  secondInFlight={seq,startedAt:performance.now()};updateStopProgress();
   try{
-    const res=await fetch(url,{
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify(body)
-    });
-    const raw=await res.text();
-
-    if(!res.ok){
-      log(`第二軌 #${seq} HTTP ${res.status}: ${raw.slice(0,1000)}`,'ERROR');
-      return;
-    }
-
-    let data;
-    try{data=JSON.parse(raw);}catch{throw new Error('REST 回傳不是 JSON');}
-
-    const text=(data.candidates||[])
-      .flatMap(c=>c.content?.parts||[])
-      .map(p=>p.text||'')
-      .join('')
-      .trim();
-
-    if(!text){
-      log(`第二軌 #${seq} 沒有收到文字結果。`,'WARN');
-      return;
-    }
-
-    track2Results.push({
-      time:new Date().toISOString(),
-      seconds,
-      text,
-      flush:isFlush,
-      seq
-    });
-    renderTrack2();
-    els.export.disabled=false;
-    log(`第二軌 #${seq} 精翻完成。`);
-  }catch(e){
-    log(`第二軌 #${seq} 請求失敗：${e.message}`,'ERROR');
-  }
+    const res=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}),raw=await res.text();
+    if(!res.ok){log(`第二軌 #${seq} HTTP ${res.status}: ${raw.slice(0,1000)}`,'ERROR');return;}
+    let data;try{data=JSON.parse(raw);}catch{throw new Error('REST JSON 解析失敗');}
+    const text=(data.candidates||[]).flatMap(c=>c.content?.parts||[]).map(p=>p.text||'').join('').trim();
+    if(!text){log(`第二軌 #${seq} 沒有文字結果。`,'WARN');return;}
+    let pair;try{pair=JSON.parse(text.replace(/^```json\s*|\s*```$/g,''));}catch{pair={original:'',translation:text};}
+    track2Results.push({time:new Date().toISOString(),seconds,original:String(pair.original||''),translation:String(pair.translation||''),flush:isFlush,seq});
+    renderTrack2();els.export.disabled=false;log(`第二軌 #${seq} 精翻完成。`);
+  }catch(e){log(`第二軌 #${seq} 失敗：${e.message}`,'ERROR');}
+  finally{secondInFlight=null;updateStopProgress();}
 }
 
-function enqueueSecondChunk(pcmBuffers, seconds, isFlush=false){
-  if(!pcmBuffers.length || seconds<0.5) return Promise.resolve();
-  const copy=pcmBuffers.map(b=>b.slice(0));
-  const seq=++chunkIndex;
+function updateStopProgress(){
+  if(!stopping)return;
+  const elapsed=Math.max(0,Math.floor((performance.now()-stopStartedAt)/1000));
+  const active=secondInFlight?`正在處理第 #${secondInFlight.seq} 段`:'等待佇列啟動';
+  const waiting=secondQueue.length;
+  els.stop.innerHTML=`<span>上傳中… ${waiting?`剩 ${waiting} 段`:'收尾中'}</span>`;
+  els.ptext.textContent=`${active}｜待處理 ${waiting} 段｜已等 ${elapsed} 秒`;
+}
+
+function enqueueSecondChunk(pcmBuffers,seconds,isFlush=false){
+  if(!pcmBuffers.length||seconds<0.5)return;
+  const copy=pcmBuffers.map(b=>b.slice(0)),seq=++chunkIndex;
   secondQueue.push({pcmBuffers:copy,seconds,isFlush,seq});
   log(`第二軌 #${seq} 已進入佇列；目前佇列 ${secondQueue.length} 段。`);
-  return processSecondQueue();
+  updateStopProgress();processSecondQueue();
 }
 
-let secondQueueDrain=Promise.resolve();
 async function processSecondQueue(){
-  if(secondSending){
-    return secondQueueDrain;
-  }
-  if(!secondQueue.length) return;
+  if(secondSending||!secondQueue.length)return;
   secondSending=true;
-  secondQueueDrain=(async()=>{
-    while(secondQueue.length){
-      const item=secondQueue.shift();
-      await sendSecondChunk(item.pcmBuffers,item.seconds,item.isFlush,item.seq);
-    }
-    secondSending=false;
-  })();
-  return secondQueueDrain;
+  while(secondQueue.length){
+    const item=secondQueue.shift();updateStopProgress();
+    await sendSecondChunk(item.pcmBuffers,item.seconds,item.isFlush,item.seq);
+  }
+  secondSending=false;updateStopProgress();
 }
 
 function renderTrack2(){
   els.t2.innerHTML='';
   [...track2Results].reverse().forEach(item=>{
     const card=document.createElement('div');card.className='second-card';
-    const tm=document.createElement('div');tm.className='second-time';
-    tm.textContent=new Date(item.time).toLocaleTimeString()+' · '+item.seconds.toFixed(1)+' 秒';
-    const tx=document.createElement('div');tx.className='second-text';tx.textContent=item.text;
-    card.append(tm,tx);els.t2.appendChild(card);
+    const tm=document.createElement('div');tm.className='second-time';tm.textContent=new Date(item.time).toLocaleTimeString()+' · '+item.seconds.toFixed(1)+' 秒';
+    const o=document.createElement('div');o.className='second-text';o.style.opacity='.65';o.textContent=item.original||'';
+    const t=document.createElement('div');t.className='second-text';t.style.color='var(--accent)';t.textContent=item.translation?`（譯）${item.translation}`:'（未取得翻譯）';
+    card.append(tm,o,t);els.t2.appendChild(card);
   });
 }
 
@@ -697,8 +612,8 @@ function addPCMToChunk(pcmBuffer){
 
 function flushChunk(force=false){
   const secs=chunkSamples/2/16000;
-  if(secs<=0) return Promise.resolve();
-  if(!force && secs<0.5) return Promise.resolve();
+  if(secs<=0) return;
+  if(!force && secs<0.5) return;
 
   const parts=chunkParts;
   const seconds=secs;
@@ -706,7 +621,7 @@ function flushChunk(force=false){
   chunkSamples=0;
   chunkStartedAt=performance.now();
 
-  return enqueueSecondChunk(parts,seconds,force);
+  enqueueSecondChunk(parts,seconds,force);
 }
 
 function updateProgress(){
@@ -767,7 +682,7 @@ async function start(){
   saveSettings();
   running=true;stopping=false;reconnects=0;
   track1Final=[];track2Results=[];currentInterim='';
-  chunkParts=[];chunkSamples=0;pendingAudioQueue=[];secondQueue=[];secondSending=false;chunkIndex=0;resumeHandle=null;lastTranscriptAt=performance.now();
+  chunkParts=[];chunkSamples=0;pendingAudioQueue=[];secondQueue=[];secondSending=false;chunkIndex=0;resumeHandle=null;lastTranscriptAt=performance.now();liveSendBuf=new Int16Array(0);firstOriginal='';firstTranslation='';
   els.t1.innerHTML='<span class="interim">連線中…</span>';
   els.t2.innerHTML='<span class="interim">等待第一個音訊切片…</span>';
   els.start.disabled=true;els.stop.disabled=false;els.export.disabled=true;
@@ -790,11 +705,11 @@ async function start(){
 }
 
 async function stop(){
-  if(!running) return;
-  stopping=true;
-  running=false;
-  els.start.disabled=false;els.stop.disabled=true;
-  setStatus('停止中…',false);
+  if(!running)return;
+  stopping=true;stopStartedAt=performance.now();
+  els.stop.disabled=true;els.stop.innerHTML='<span>上傳中…</span>';setStatus('正在完成第二軌…',false);
+  if(stopProgressTimer)clearInterval(stopProgressTimer);
+  stopProgressTimer=setInterval(updateStopProgress,500);updateStopProgress();
   if(chunkTimer){clearInterval(chunkTimer);chunkTimer=null;}
   if(progressTimer){clearInterval(progressTimer);progressTimer=null;}
   if(watchdogTimer){clearInterval(watchdogTimer);watchdogTimer=null;}
@@ -803,24 +718,24 @@ async function stop(){
   if(sourceNode){try{sourceNode.disconnect();}catch{}sourceNode=null;}
   if(mediaStream){mediaStream.getTracks().forEach(t=>t.stop());mediaStream=null;}
   if(audioContext){try{await audioContext.close();}catch{}audioContext=null;}
-  flushLiveSendBuf();
-  closeWS();
-  if(wakeLock){try{await wakeLock.release();}catch{}wakeLock=null;}
   const secs=chunkSamples/2/16000;
-  if(secs>0.5) flushChunk(true);
-  else {chunkParts=[];chunkSamples=0;}
-  await processSecondQueue();
-  updateProgress();
-  setStatus('已停止',false);
-  log('所有服務已停止。');
-  stopping=false;
+  if(secs>0.5)flushChunk(true);else{chunkParts=[];chunkSamples=0;}
+  running=false;
+  flushLiveSendBuf();closeWS();
+  if(wakeLock){try{await wakeLock.release();}catch{}wakeLock=null;}
+  while(secondSending||secondQueue.length){updateStopProgress();await new Promise(r=>setTimeout(r,150));}
+  if(stopProgressTimer){clearInterval(stopProgressTimer);stopProgressTimer=null;}
+  updateProgress();setStatus('已停止',false);
+  els.start.disabled=false;els.stop.disabled=true;els.stop.innerHTML='<span>停止</span>';
+  els.ptext.textContent='第二軌全部處理完成';
+  log('所有服務已停止（第二軌已全部處理完畢）。');stopping=false;
 }
 
 function exportMarkdown(){
   const lines=[
-    '# Gemini 雙軌即時同傳記錄',
+    '# 雙子座同聲傳譯記錄',
     '',
-    `- 版本：3.1.0`,
+    `- 版本：3.1.19「雙子座」`,
     `- 匯出時間：${new Date().toLocaleString()}`,
     `- 目標語言：${els.target.value}`,
     `- 第一軌模型：${els.model1.value}`,
@@ -857,7 +772,7 @@ document.addEventListener('visibilitychange',async()=>{
   }
 });
 
-loadSettings();bindSettings();log('v3.1.18「雙子座」載入完成。');
+loadSettings();bindSettings();log('v3.1.19「雙子座」載入完成。');
 })();
 </script>
 </body>
